@@ -1,0 +1,20 @@
+# Secrets — never commit. See .env.example for the variable names.
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Local-only working material. Never committed — this repository is public.
+# Holds the build context document and the §A.2 / §A.16 verification reports,
+# which stay on the author's machine.
+.local/
+
+# macOS
+.DS_Store
