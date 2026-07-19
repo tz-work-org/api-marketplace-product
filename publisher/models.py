@@ -40,10 +40,16 @@ class Document:
     Separate from the entry that points at it, because the portal models them as
     two resources: changing a page's text is a different call from changing its
     position in the navigation.
+
+    `id` is the portal's `documentId`: `None` for a document loaded from the
+    repository (desired state), populated for one read back from the portal
+    (actual state). `source_path` is the reverse — set for desired state, empty
+    for actual, which has no repo file behind it.
     """
 
     content: str
-    source_path: str  # Repo-relative, so error messages can name the real file.
+    source_path: str = ""  # Repo-relative, so error messages can name the real file.
+    id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -62,6 +68,7 @@ class TocEntry:
     content_url: str
     parent_slug: str | None = None
     document: Document | None = None
+    id: str | None = None  # Portal `tocId`: None for desired, set for actual state.
 
     @property
     def is_api_reference(self) -> bool:
@@ -75,19 +82,26 @@ class Product:
     `name` comes from the directory name rather than the manifest, because §A.4
     makes the folder name the product name. Keeping it out of the manifest means
     the two cannot disagree.
+
+    One dataclass serves both desired and actual state (§A.12). The fields that
+    only desired state has default to empty: a product read back from the portal
+    carries an `id` but no `owner` (the portal has no ownership concept, §A.10)
+    and its `entries` are fetched separately. A product loaded from a manifest is
+    the mirror image — `owner` and `entries` set, `id` still `None`.
     """
 
     name: str
     slug: str
     description: str
-    owner: Owner
-    entries: tuple[TocEntry, ...]
+    owner: Owner | None = None
+    entries: tuple[TocEntry, ...] = ()
     public: bool = False
     hidden: bool = False
     auto_publish: bool = False
     logo: str | None = None
     logo_dark: str | None = None
     source_path: str = ""  # Repo-relative directory, for error messages.
+    id: str | None = None  # Portal `productId`: None for desired, set for actual.
 
     @property
     def api_references(self) -> tuple[TocEntry, ...]:

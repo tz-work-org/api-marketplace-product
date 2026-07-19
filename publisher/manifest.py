@@ -21,10 +21,12 @@ from .models import API_REFERENCE_TYPE, DOCUMENT_TYPES, Document, Owner, Product
 MANIFEST_FILENAME = "manifest.json"
 SCHEMA_PATH = Path(__file__).parent.parent / "schemas" / "manifest.schema.json"
 
-# Portal API caps product names at 22 characters. §A.4 makes the directory name
-# the product name, so an over-long directory name is unrepresentable and must
-# fail here rather than as a 400 part-way through an apply.
-MAX_PRODUCT_NAME_LENGTH = 22
+# Portal API caps product names at 40 characters (the 22-character limit is the
+# *slug*, enforced by the schema). §A.4 makes the directory name the product
+# name, so an over-long directory name is unrepresentable and must fail here
+# rather than as a 400 part-way through an apply. Verified against the official
+# smartbear-public/swaggerhub-portal-api/0.8.0-beta spec.
+MAX_PRODUCT_NAME_LENGTH = 40
 
 
 class ManifestError(ValueError):

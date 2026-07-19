@@ -95,11 +95,23 @@ def test_rejects_values_the_portal_will_not_accept(
 
 
 def test_rejects_product_name_longer_than_the_portal_allows(products_root):
-    """The directory name is the product name, and the portal caps it at 22."""
-    write_product(products_root, "A" * 23, VALID_MANIFEST)
+    """The directory name is the product name, and the portal caps it at 40.
 
-    with pytest.raises(ManifestError, match="23 characters"):
+    (22 is the *slug* limit — a distinction the first spec version blurred.)
+    """
+    write_product(products_root, "A" * 41, VALID_MANIFEST)
+
+    with pytest.raises(ManifestError, match="41 characters"):
         load_all_products(products_root)
+
+
+def test_accepts_product_name_up_to_the_forty_character_limit(products_root):
+    """A 40-character directory name fits — the previous 22 cap was too strict."""
+    write_product(products_root, "A" * 40, VALID_MANIFEST)
+
+    products = load_all_products(products_root)
+
+    assert products[0].name == "A" * 40
 
 
 # --- schema and internal consistency --------------------------------------
