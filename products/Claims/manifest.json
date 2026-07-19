@@ -1,0 +1,37 @@
+{
+  "productMetadata": {
+    "description": "APIs for claims intake, adjudication and settlement.",
+    "slug": "claims",
+    "public": false,
+    "hidden": false,
+    "autoPublish": false,
+    "owner": {
+      "name": "Thiru",
+      "email": "gpt4tjanfrost@outlook.com",
+      "githubHandle": "techwiththiru"
+    }
+  },
+  "contentMetadata": [
+    {
+      "order": 1,
+      "name": "Getting Started",
+      "slug": "getting-started",
+      "type": "markdown",
+      "contentUrl": "getting-started.md"
+    },
+    {
+      "order": 2,
+      "name": "Claims Intake API",
+      "slug": "claims-intake-api",
+      "type": "apiUrl",
+      "contentUrl": "https://api.swaggerhub.com/apis/sparklayerinc-55d/claims-intake-api/1.0.0/swagger.json"
+    },
+    {
+      "order": 3,
+      "name": "Settlement API",
+      "slug": "settlement-api",
+      "type": "apiUrl",
+      "contentUrl": "https://api.swaggerhub.com/apis/sparklayerinc-55d/settlement-api/1.0.0/swagger.json"
+    }
+  ]
+}

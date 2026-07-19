@@ -266,6 +266,39 @@ The author's work laptop cannot reach the SmartBear APIs. §A.12's rule that `re
 performs no I/O means the entire diff engine remains developable and testable there — that rule
 is now load-bearing for a reason beyond unit-test convenience.
 
+## Python version
+
+| | Value |
+|---|---|
+| Language floor (§A.12) | **3.11** — no 3.12+ syntax is used |
+| Target line | **3.13**, declared in `.python-version` |
+| Tested on | 3.13.11 |
+| Lambda runtime | `python3.13` |
+| CI | `python-version: "3.13"` |
+
+The minor line is pinned, not the patch. Lambda only offers `python3.13` — a patch cannot be
+selected there — so pinning `3.13.11` locally would be stricter than the environment being
+deployed to, buying nothing and breaking any machine one patch behind.
+
+All four environments must name the same line, or a demonstration fails somewhere other than
+where it was tested.
+
+## Dependencies
+
+The budget is deliberately small, and split by whether a dependency **ships**:
+
+| Scope | Allowed | File | Ships? |
+|---|---|---|---|
+| Runtime | `requests`, `jsonschema` | `requirements.txt` | ✅ — bundled into the Lambda artefact |
+| Development | `pytest` | `requirements-dev.txt` | ❌ |
+
+```bash
+.venv/bin/pip install -r requirements-dev.txt   # pulls in runtime too
+```
+
+**Nothing else in either column without agreement.** Raise it as a decision with options and a
+recommendation — do not pick one silently because a constraint appears to settle the matter.
+
 ## Architecture decisions
 
 Decisions that shape the code live in `docs/adr/`, numbered and immutable once accepted. Supersede

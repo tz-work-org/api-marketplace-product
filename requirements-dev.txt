@@ -1,0 +1,8 @@
+# Development dependencies. These do NOT ship — they are excluded from the
+# Lambda deployment artefact, which is why they live in a separate file from
+# requirements.txt (§A.12).
+#
+# Install both for local work:
+#   .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+-r requirements.txt
+pytest>=8.0
