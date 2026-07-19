@@ -193,4 +193,8 @@ review concern, not an architecture concern.
 4. [ ] Write `lambda_handler.py` — config, tarball into `/tmp`, call, return dict.
 5. [ ] Add a `requirements.txt` install step to both CI wrappers, so `python3`
        resolves to an interpreter that actually has the dependencies.
+7. [ ] Keep all four environments on the same Python line — `.python-version`
+       says `3.13`, CI must set `python-version: "3.13"`, and the Lambda runtime
+       must be `python3.13`. A mismatch fails somewhere other than where it was
+       tested, which is the failure mode this ADR exists to prevent.
 6. [ ] Raise the §A.12 module-table deviation at production review.

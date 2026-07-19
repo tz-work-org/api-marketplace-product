@@ -1,4 +1,5 @@
-# Python 3.11+ required.
+# Python 3.11+ required; 3.13 is the target line (see .python-version) and
+# 3.13.11 is what this is tested on. Lambda runtime: python3.13.
 #
 # The dependency budget is deliberately small (§A.12): standard library plus
 # these two, and nothing else without asking. Specifications are posted to
