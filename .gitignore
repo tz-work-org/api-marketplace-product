@@ -16,5 +16,9 @@ venv/
 # which stay on the author's machine.
 .local/
 
+# Claude Code session and local settings. Ignored explicitly here rather than
+# relying on a machine's global gitignore, so the rule travels with the repo.
+.claude/
+
 # macOS
 .DS_Store
