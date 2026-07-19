@@ -1,0 +1,186 @@
+openapi: 3.0.3
+info:
+  title: Policy Issuance API
+  version: 1.0.0
+  description: |
+    Issues new policies and returns the cover they provide. This API models
+    *what is covered and what it costs* — coverage sections with limits and
+    excesses, and a premium broken down for tax purposes.
+servers:
+  - url: https://api.example-insurer.test/policy-issuance/v1
+
+paths:
+  /policies:
+    get:
+      summary: Find policies for an insured party
+      operationId: listPolicies
+      parameters:
+        - name: partyId
+          in: query
+          required: true
+          schema:
+            type: string
+            example: PTY-00318842
+        - name: inForceOn
+          in: query
+          description: Returns only policies in force on this date. Defaults to today.
+          schema:
+            type: string
+            format: date
+            example: '2026-07-19'
+      responses:
+        '200':
+          description: Policies held by the party.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Policy'
+
+    post:
+      summary: Issue a new policy
+      description: |
+        Issues cover from the requested inception date. Back-dating beyond 30
+        days is rejected — cover cannot be bought after a loss is known.
+      operationId: issuePolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyRequest'
+      responses:
+        '201':
+          description: Policy issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Policy'
+        '400':
+          description: Inception date is back-dated beyond the permitted window.
+
+  /policies/{policyNumber}:
+    put:
+      summary: Replace policy detail at renewal
+      description: |
+        Used at renewal, when the whole schedule is restated. Mid-term changes
+        must go through Policy Endorsement instead, so that the audit trail
+        records what changed rather than only the end state.
+      operationId: renewPolicy
+      parameters:
+        - name: policyNumber
+          in: path
+          required: true
+          schema:
+            type: string
+            example: MOT-2291043
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyRequest'
+      responses:
+        '200':
+          description: Policy renewed.
+        '409':
+          description: Policy has a pending endorsement and cannot be renewed until it is applied.
+
+components:
+  schemas:
+    Policy:
+      type: object
+      required: [policyNumber, productCode, inceptionDate, expiryDate, coverages]
+      properties:
+        policyNumber:
+          type: string
+          example: MOT-2291043
+        productCode:
+          type: string
+          description: Identifies the underwriting product and therefore the wording.
+          example: MOTOR-COMP-2026
+        inceptionDate:
+          type: string
+          format: date
+          example: '2026-04-01'
+        expiryDate:
+          type: string
+          format: date
+          example: '2027-03-31'
+        insuredPartyId:
+          type: string
+          example: PTY-00318842
+        coverages:
+          type: array
+          items:
+            $ref: '#/components/schemas/Coverage'
+        premium:
+          $ref: '#/components/schemas/Premium'
+        paymentFrequency:
+          type: string
+          enum: [annual, monthly]
+          example: monthly
+
+    PolicyRequest:
+      type: object
+      required: [productCode, inceptionDate, insuredPartyId, coverages]
+      properties:
+        productCode:
+          type: string
+          example: MOTOR-COMP-2026
+        inceptionDate:
+          type: string
+          format: date
+          example: '2026-04-01'
+        insuredPartyId:
+          type: string
+          example: PTY-00318842
+        coverages:
+          type: array
+          items:
+            $ref: '#/components/schemas/Coverage'
+        paymentFrequency:
+          type: string
+          enum: [annual, monthly]
+          example: monthly
+
+    Coverage:
+      type: object
+      description: One section of cover. A policy is the sum of its sections.
+      required: [code, limit]
+      properties:
+        code:
+          type: string
+          enum: [own-damage, third-party-liability, fire-theft, windscreen, legal-expenses]
+          example: own-damage
+        limit:
+          type: number
+          format: double
+          description: Maximum payable under this section, per claim.
+          example: 25000
+        excess:
+          type: number
+          format: double
+          description: Borne by the policyholder before cover responds.
+          example: 350
+
+    Premium:
+      type: object
+      required: [gross, netOfTax, insurancePremiumTax]
+      properties:
+        gross:
+          type: number
+          format: double
+          example: 642.18
+        insurancePremiumTax:
+          type: number
+          format: double
+          example: 68.80
+        netOfTax:
+          type: number
+          format: double
+          example: 573.38
+        currency:
+          type: string
+          example: GBP

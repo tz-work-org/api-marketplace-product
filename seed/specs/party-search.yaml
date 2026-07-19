@@ -1,0 +1,181 @@
+openapi: 3.0.3
+info:
+  title: Party Search API
+  version: 1.0.0
+  description: |
+    Finds people and organisations across the book, and reports how confident
+    the match is. This API models *identity resolution* — the same person may
+    appear under several records, and the caller needs to know how sure the
+    system is before merging anything.
+servers:
+  - url: https://api.example-insurer.test/party-search/v1
+
+paths:
+  /parties:
+    get:
+      summary: Search for a party
+      description: |
+        Deliberately fuzzy. Results carry `matchConfidence` so a caller can
+        decide whether to auto-link or route to a human — never assume the top
+        result is correct.
+      operationId: searchParties
+      parameters:
+        - name: name
+          in: query
+          schema:
+            type: string
+            example: Priya Raman
+        - name: dateOfBirth
+          in: query
+          schema:
+            type: string
+            format: date
+            example: '1984-11-02'
+        - name: postcode
+          in: query
+          schema:
+            type: string
+            example: M20 4WX
+        - name: minConfidence
+          in: query
+          description: Suppresses weak matches. Sensible default for automation is 0.9.
+          schema:
+            type: number
+            format: float
+            minimum: 0
+            maximum: 1
+            default: 0.6
+      responses:
+        '200':
+          description: Candidate parties, highest confidence first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PartyMatch'
+
+    post:
+      summary: Create a party record
+      description: |
+        Used when a search has genuinely found nothing. Callers are expected to
+        search first — creating duplicates is the main way this dataset degrades.
+      operationId: createParty
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Party'
+      responses:
+        '201':
+          description: Party created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Party'
+        '409':
+          description: A party with confidence above 0.95 already exists; merge instead.
+
+  /parties/{partyId}:
+    put:
+      summary: Replace a party record
+      operationId: replaceParty
+      parameters:
+        - name: partyId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: PTY-00318842
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Party'
+      responses:
+        '200':
+          description: Party replaced.
+        '404':
+          description: No such party, or the record has been merged into another.
+
+components:
+  schemas:
+    Party:
+      type: object
+      required: [partyType, name]
+      properties:
+        partyId:
+          type: string
+          readOnly: true
+          example: PTY-00318842
+        partyType:
+          type: string
+          enum: [individual, organisation]
+          example: individual
+        name:
+          type: string
+          example: Priya Raman
+        dateOfBirth:
+          type: string
+          format: date
+          description: Individuals only. Absent for organisations.
+          example: '1984-11-02'
+        addresses:
+          type: array
+          items:
+            $ref: '#/components/schemas/Address'
+        roles:
+          type: array
+          description: A party may hold several roles at once across different policies.
+          items:
+            type: string
+            enum: [policyholder, named-driver, claimant, beneficiary, broker, supplier]
+          example: [policyholder, claimant]
+
+    PartyMatch:
+      type: object
+      required: [party, matchConfidence]
+      properties:
+        party:
+          $ref: '#/components/schemas/Party'
+        matchConfidence:
+          type: number
+          format: float
+          description: 0.0 to 1.0. Above 0.95 is safe to auto-link; below 0.75 needs a human.
+          example: 0.93
+        matchedOn:
+          type: array
+          description: Which fields drove the match, for explainability.
+          items:
+            type: string
+            enum: [name, dateOfBirth, postcode, email, phone]
+          example: [name, postcode]
+
+    Address:
+      type: object
+      required: [addressType, line1, postcode]
+      properties:
+        addressType:
+          type: string
+          enum: [residential, correspondence, registered-office, risk]
+          example: residential
+        line1:
+          type: string
+          example: 14 Elmsworth Avenue
+        town:
+          type: string
+          example: Manchester
+        postcode:
+          type: string
+          example: M20 4WX
+        validFrom:
+          type: string
+          format: date
+          example: '2021-09-01'
+        validTo:
+          type: string
+          format: date
+          description: Absent while the address is current.
+          example: '2025-04-30'

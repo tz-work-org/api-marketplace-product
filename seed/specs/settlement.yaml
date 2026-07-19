@@ -1,0 +1,169 @@
+openapi: 3.0.3
+info:
+  title: Settlement API
+  version: 1.0.0
+  description: |
+    Issues payment instructions against approved claims. This API models *money
+    leaving the business*: payees, bank details, payment rails and settlement
+    dates. It deliberately holds no claim assessment logic.
+servers:
+  - url: https://api.example-insurer.test/settlement/v1
+
+paths:
+  /settlements:
+    get:
+      summary: List settlements for a claim
+      operationId: listSettlements
+      parameters:
+        - name: claimReference
+          in: query
+          required: true
+          schema:
+            type: string
+            example: CLM-2026-004417
+      responses:
+        '200':
+          description: Settlements raised against the claim, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Settlement'
+
+    post:
+      summary: Raise a settlement
+      description: |
+        Creates a payment instruction in `pending-approval`. Nothing is paid
+        until a second party approves it — segregation of duties is enforced by
+        the payments platform, not by this API.
+      operationId: raiseSettlement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettlementInstruction'
+      responses:
+        '201':
+          description: Settlement raised, awaiting approval.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settlement'
+        '409':
+          description: Claim is not in an approved state, so it cannot be settled.
+
+  /settlements/{settlementId}:
+    put:
+      summary: Amend a settlement before payment
+      description: |
+        Only settlements in `pending-approval` may be amended. Once released to
+        the payment rail an instruction is immutable and must be reversed by a
+        recovery rather than edited.
+      operationId: amendSettlement
+      parameters:
+        - name: settlementId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: STL-9938201
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettlementInstruction'
+      responses:
+        '200':
+          description: Settlement amended.
+        '409':
+          description: Settlement already released and cannot be amended.
+
+components:
+  schemas:
+    Settlement:
+      type: object
+      required: [settlementId, claimReference, amount, status]
+      properties:
+        settlementId:
+          type: string
+          example: STL-9938201
+        claimReference:
+          type: string
+          example: CLM-2026-004417
+        payee:
+          $ref: '#/components/schemas/Payee'
+        amount:
+          $ref: '#/components/schemas/MonetaryAmount'
+        paymentMethod:
+          type: string
+          enum: [bacs, chaps, faster-payments, cheque]
+          example: bacs
+        settlementDate:
+          type: string
+          format: date
+          description: Value date on which funds are expected to reach the payee.
+          example: '2026-07-02'
+        status:
+          type: string
+          enum: [pending-approval, approved, released, settled, failed]
+          example: pending-approval
+        failureReason:
+          type: string
+          description: Populated only when status is `failed`.
+          example: Account closed — payee bank rejected the credit.
+
+    SettlementInstruction:
+      type: object
+      required: [claimReference, payee, amount, paymentMethod]
+      properties:
+        claimReference:
+          type: string
+          example: CLM-2026-004417
+        payee:
+          $ref: '#/components/schemas/Payee'
+        amount:
+          $ref: '#/components/schemas/MonetaryAmount'
+        paymentMethod:
+          type: string
+          enum: [bacs, chaps, faster-payments, cheque]
+          example: bacs
+        requestedSettlementDate:
+          type: string
+          format: date
+          example: '2026-07-02'
+
+    Payee:
+      type: object
+      required: [name, payeeType]
+      properties:
+        name:
+          type: string
+          example: Ashfield Motor Repairs Ltd
+        payeeType:
+          type: string
+          enum: [claimant, supplier, third-party-insurer, solicitor]
+          description: Drives which approval limits and tax treatment apply.
+          example: supplier
+        sortCode:
+          type: string
+          pattern: '^[0-9]{6}$'
+          example: '203015'
+        accountNumber:
+          type: string
+          pattern: '^[0-9]{8}$'
+          example: '44182207'
+
+    MonetaryAmount:
+      type: object
+      required: [value, currency]
+      properties:
+        value:
+          type: number
+          format: double
+          example: 4310.55
+        currency:
+          type: string
+          example: GBP
