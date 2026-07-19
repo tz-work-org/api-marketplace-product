@@ -118,11 +118,20 @@ def read_specification(spec_filename: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+class ConfigurationError(RuntimeError):
+    """Required configuration is missing or empty."""
+
+
 def read_configuration() -> tuple[str, str]:
     """Read the API key and organisation from the environment.
 
     Environment variables only, matching the publisher (§A.11), so the two
     programs are configured the same way.
+
+    Raises rather than exiting: only the entry point decides what a failure
+    means. A CLI turns it into an exit code, a Lambda handler turns it into a
+    returned value, and neither can do so if the function has already killed
+    the process. See ADR-0001.
     """
     api_key = os.environ.get("SWAGGERHUB_API_KEY", "").strip()
     organisation = os.environ.get("SWAGGERHUB_ORG", "").strip()
@@ -133,7 +142,7 @@ def read_configuration() -> tuple[str, str]:
     if not organisation:
         missing.append("SWAGGERHUB_ORG")
     if missing:
-        raise SystemExit(f"Missing environment variable(s): {', '.join(missing)}")
+        raise ConfigurationError(f"Missing environment variable(s): {', '.join(missing)}")
 
     return api_key, organisation
 
@@ -277,19 +286,19 @@ def main() -> int:
         print("--teardown requires --confirm (or --dry-run to preview).", file=sys.stderr)
         return 1
 
-    api_key, organisation = read_configuration()
-    client = RegistryClient(api_key)
-
-    mode = "teardown" if arguments.teardown else "seed"
-    print(f"# {mode} against organisation {organisation}"
-          f"{' (dry run — nothing will be called)' if arguments.dry_run else ''}\n")
-
     try:
+        api_key, organisation = read_configuration()
+        client = RegistryClient(api_key)
+
+        mode = "teardown" if arguments.teardown else "seed"
+        print(f"# {mode} against organisation {organisation}"
+              f"{' (dry run — nothing will be called)' if arguments.dry_run else ''}\n")
+
         if arguments.teardown:
             run_teardown(client, organisation, arguments.dry_run)
         else:
             run_seed(client, organisation, arguments.dry_run)
-    except (RegistryError, FileNotFoundError) as error:
+    except (ConfigurationError, RegistryError, FileNotFoundError) as error:
         print(f"\nFAILED: {error}", file=sys.stderr)
         return 1
 
