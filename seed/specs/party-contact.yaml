@@ -1,0 +1,157 @@
+openapi: 3.0.3
+info:
+  title: Party Contact API
+  version: 1.0.0
+  description: |
+    Holds contact channels for a party and the consent recorded against each.
+    This API models *permission to make contact* — the channel matters less than
+    whether we are allowed to use it, and for what purpose.
+
+    NOTE: this API is deliberately left in an unpublished state by the seed
+    fixture utility. It exists to prove that the product publisher fails clearly
+    when a manifest references an API that cannot be linked to a portal product.
+servers:
+  - url: https://api.example-insurer.test/party-contact/v1
+
+paths:
+  /parties/{partyId}/contacts:
+    get:
+      summary: List contact channels for a party
+      description: |
+        Returns every channel including those without consent, so that a caller
+        can see *why* a party is uncontactable rather than finding an empty list.
+      operationId: listContacts
+      parameters:
+        - name: partyId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: PTY-00318842
+        - name: purpose
+          in: query
+          description: Filters to channels consented for this purpose.
+          schema:
+            type: string
+            enum: [servicing, marketing, claims-handling]
+      responses:
+        '200':
+          description: Contact channels held for the party.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ContactChannel'
+
+    post:
+      summary: Add a contact channel
+      description: |
+        A newly added channel starts unverified and without marketing consent.
+        Consent is never inferred from the act of providing a contact detail.
+      operationId: addContact
+      parameters:
+        - name: partyId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContactChannel'
+      responses:
+        '201':
+          description: Channel added, pending verification.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactChannel'
+
+  /parties/{partyId}/contacts/{contactId}/consent:
+    put:
+      summary: Record a consent decision
+      description: |
+        Each decision is stamped with its source and time, because consent must
+        be evidenced, not merely asserted. Withdrawal takes effect immediately.
+      operationId: recordConsent
+      parameters:
+        - name: partyId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: contactId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: CNT-5520118
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsentRecord'
+      responses:
+        '200':
+          description: Consent updated.
+        '410':
+          description: Channel has been withdrawn and cannot be re-consented; add a new one.
+
+components:
+  schemas:
+    ContactChannel:
+      type: object
+      required: [channel, value]
+      properties:
+        contactId:
+          type: string
+          readOnly: true
+          example: CNT-5520118
+        channel:
+          type: string
+          enum: [email, sms, phone, post]
+          example: email
+        value:
+          type: string
+          description: Format depends on channel — address, number, or postal address.
+          example: priya.raman@example.test
+        preferred:
+          type: boolean
+          description: At most one channel per party may be preferred.
+          example: true
+        verifiedAt:
+          type: string
+          format: date-time
+          description: Absent until the channel has been confirmed by the party.
+          example: '2026-05-11T08:31:00Z'
+        consent:
+          $ref: '#/components/schemas/ConsentRecord'
+
+    ConsentRecord:
+      type: object
+      required: [servicing, marketing, capturedAt, capturedVia]
+      properties:
+        servicing:
+          type: boolean
+          description: Contact about existing policies and claims. Rarely refused.
+          example: true
+        marketing:
+          type: boolean
+          description: Contact about other products. Must be explicit opt-in.
+          example: false
+        claimsHandling:
+          type: boolean
+          example: true
+        capturedAt:
+          type: string
+          format: date-time
+          example: '2026-05-11T08:31:00Z'
+        capturedVia:
+          type: string
+          enum: [web-form, telephone, paper, broker, migration]
+          description: Evidence source. `migration` consent is treated as weakest.
+          example: web-form

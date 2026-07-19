@@ -1,0 +1,8 @@
+# Python 3.11+ required.
+#
+# The dependency budget is deliberately small (§A.12): standard library plus
+# these two, and nothing else without asking. Specifications are posted to
+# SwaggerHub as raw YAML text rather than parsed, which is what keeps PyYAML
+# off this list.
+requests>=2.31
+jsonschema>=4.20

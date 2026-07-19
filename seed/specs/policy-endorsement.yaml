@@ -1,0 +1,186 @@
+openapi: 3.0.3
+info:
+  title: Policy Endorsement API
+  version: 1.0.0
+  description: |
+    Applies mid-term adjustments to a policy already in force. This API models
+    *change itself* — what was altered, from what to what, effective when, and
+    what it cost pro rata. The resource is the adjustment, not the policy.
+servers:
+  - url: https://api.example-insurer.test/policy-endorsement/v1
+
+paths:
+  /policies/{policyNumber}/endorsements:
+    get:
+      summary: List endorsements applied to a policy
+      description: |
+        Ordered by effective date. Reconstructing the policy as it stood on a
+        given day means replaying these in order over the issued schedule.
+      operationId: listEndorsements
+      parameters:
+        - name: policyNumber
+          in: path
+          required: true
+          schema:
+            type: string
+            example: MOT-2291043
+      responses:
+        '200':
+          description: Endorsements against the policy, earliest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Endorsement'
+
+    post:
+      summary: Raise an endorsement
+      description: |
+        Calculates the pro-rata premium adjustment for the unexpired term and
+        returns it for acceptance. Nothing is applied until the endorsement is
+        confirmed via PUT.
+      operationId: raiseEndorsement
+      parameters:
+        - name: policyNumber
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EndorsementRequest'
+      responses:
+        '201':
+          description: Endorsement quoted, awaiting confirmation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Endorsement'
+        '422':
+          description: Effective date falls outside the policy term.
+
+  /policies/{policyNumber}/endorsements/{endorsementId}:
+    put:
+      summary: Confirm or decline a quoted endorsement
+      description: |
+        Two-step by design: the customer sees the price before the change binds.
+        Declining leaves the policy untouched and closes the endorsement.
+      operationId: confirmEndorsement
+      parameters:
+        - name: policyNumber
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: endorsementId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: END-771902
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision:
+                  type: string
+                  enum: [confirm, decline]
+                  example: confirm
+      responses:
+        '200':
+          description: Endorsement applied or closed.
+        '409':
+          description: Endorsement has already been confirmed or declined.
+
+components:
+  schemas:
+    Endorsement:
+      type: object
+      required: [endorsementId, reasonCode, effectiveDate, status]
+      properties:
+        endorsementId:
+          type: string
+          example: END-771902
+        reasonCode:
+          type: string
+          enum:
+            [address-change, vehicle-change, driver-added, driver-removed,
+             coverage-increase, coverage-reduction]
+          example: driver-added
+        effectiveDate:
+          type: string
+          format: date
+          example: '2026-08-01'
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/FieldChange'
+        premiumAdjustment:
+          $ref: '#/components/schemas/PremiumAdjustment'
+        status:
+          type: string
+          enum: [quoted, confirmed, declined]
+          example: quoted
+
+    EndorsementRequest:
+      type: object
+      required: [reasonCode, effectiveDate, changes]
+      properties:
+        reasonCode:
+          type: string
+          enum:
+            [address-change, vehicle-change, driver-added, driver-removed,
+             coverage-increase, coverage-reduction]
+          example: driver-added
+        effectiveDate:
+          type: string
+          format: date
+          example: '2026-08-01'
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/FieldChange'
+
+    FieldChange:
+      type: object
+      description: One altered field, carrying both sides so the change is self-describing.
+      required: [field, newValue]
+      properties:
+        field:
+          type: string
+          example: namedDrivers
+        previousValue:
+          type: string
+          example: 'Priya Raman'
+        newValue:
+          type: string
+          example: 'Priya Raman, Sam Okonkwo'
+
+    PremiumAdjustment:
+      type: object
+      required: [amount, basis]
+      properties:
+        amount:
+          type: number
+          format: double
+          description: Positive for additional premium, negative for a refund.
+          example: 84.20
+        basis:
+          type: string
+          enum: [pro-rata, short-period, flat-fee]
+          example: pro-rata
+        unexpiredDays:
+          type: integer
+          description: Days of cover remaining, used in the pro-rata calculation.
+          example: 243
+        currency:
+          type: string
+          example: GBP

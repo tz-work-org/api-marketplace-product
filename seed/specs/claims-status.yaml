@@ -1,0 +1,165 @@
+openapi: 3.0.3
+info:
+  title: Claims Status API
+  version: 1.0.0
+  description: |
+    Tracks the lifecycle of a claim as a sequence of state transitions, with the
+    service-level target attached to the current state. This API models *time
+    and transitions* — who moved a claim, when, and whether it is late.
+servers:
+  - url: https://api.example-insurer.test/claims-status/v1
+
+paths:
+  /claims/{claimReference}/status:
+    get:
+      summary: Get current status and transition history
+      description: |
+        History is returned oldest first so a reader can follow the claim
+        forwards. Complaints handling depends on this ordering.
+      operationId: getClaimStatus
+      parameters:
+        - name: claimReference
+          in: path
+          required: true
+          schema:
+            type: string
+            example: CLM-2026-004417
+      responses:
+        '200':
+          description: Current status with full history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusView'
+        '404':
+          description: No such claim.
+
+    post:
+      summary: Record a status transition
+      description: |
+        Transitions are appended, never overwritten — the history is the audit
+        trail for regulatory reporting. Invalid transitions (for example
+        declined to approved) are rejected rather than silently applied.
+      operationId: recordTransition
+      parameters:
+        - name: claimReference
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransitionRequest'
+      responses:
+        '201':
+          description: Transition recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusView'
+        '422':
+          description: Transition is not permitted from the current status.
+
+  /claims/{claimReference}/status/sla:
+    put:
+      summary: Set or extend the service-level target
+      description: |
+        Extending an SLA is an explicit, reasoned act rather than a side effect
+        of a transition, so that extensions are visible in reporting.
+      operationId: setSlaTarget
+      parameters:
+        - name: claimReference
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slaTargetDate, reason]
+              properties:
+                slaTargetDate:
+                  type: string
+                  format: date
+                  example: '2026-07-31'
+                reason:
+                  type: string
+                  example: Awaiting engineer report from third-party garage.
+      responses:
+        '200':
+          description: Target updated.
+
+components:
+  schemas:
+    StatusView:
+      type: object
+      required: [claimReference, currentStatus, history]
+      properties:
+        claimReference:
+          type: string
+          example: CLM-2026-004417
+        currentStatus:
+          type: string
+          enum: [received, under-review, awaiting-information, approved, declined, closed]
+          example: awaiting-information
+        enteredCurrentStatusAt:
+          type: string
+          format: date-time
+          example: '2026-06-19T09:14:22Z'
+        slaTargetDate:
+          type: string
+          format: date
+          example: '2026-07-31'
+        slaBreached:
+          type: boolean
+          description: Derived at read time by comparing the target against today.
+          example: false
+        history:
+          type: array
+          description: Oldest first.
+          items:
+            $ref: '#/components/schemas/Transition'
+
+    Transition:
+      type: object
+      required: [toStatus, occurredAt, actor]
+      properties:
+        fromStatus:
+          type: string
+          description: Absent on the first transition, when the claim came into existence.
+          example: received
+        toStatus:
+          type: string
+          example: under-review
+        occurredAt:
+          type: string
+          format: date-time
+          example: '2026-06-17T14:02:51Z'
+        actor:
+          type: string
+          description: Handler identifier, or SYSTEM for automated transitions.
+          example: handler.jmurray
+        reason:
+          type: string
+          example: Allocated to motor desk following triage.
+
+    TransitionRequest:
+      type: object
+      required: [toStatus, actor]
+      properties:
+        toStatus:
+          type: string
+          enum: [under-review, awaiting-information, approved, declined, closed]
+          example: awaiting-information
+        actor:
+          type: string
+          example: handler.jmurray
+        reason:
+          type: string
+          example: Requested repair estimate from claimant.

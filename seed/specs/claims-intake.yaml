@@ -1,0 +1,183 @@
+openapi: 3.0.3
+info:
+  title: Claims Intake API
+  version: 1.0.0
+  description: |
+    Records first notification of loss and carries a claim through initial
+    assessment. This is where a claim comes into existence; downstream systems
+    reference the claim by its `claimReference`.
+servers:
+  - url: https://api.example-insurer.test/claims-intake/v1
+
+paths:
+  /claims:
+    get:
+      summary: List claims registered against a policy
+      description: |
+        Returns claims for a single policy. A policy number is required — this
+        API is not a general search surface, which is what Claims Search exists
+        for.
+      operationId: listClaimsForPolicy
+      parameters:
+        - name: policyNumber
+          in: query
+          required: true
+          schema:
+            type: string
+            example: MOT-2291043
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [received, under-review, approved, declined]
+      responses:
+        '200':
+          description: Claims registered against the policy.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Claim'
+        '404':
+          description: No such policy.
+
+    post:
+      summary: Register a new claim
+      description: |
+        Creates a claim from a first notification of loss. The claim reference
+        is allocated by this service, not supplied by the caller, so that
+        references remain unique across intake channels.
+      operationId: registerClaim
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimRegistration'
+      responses:
+        '201':
+          description: Claim registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Claim'
+        '400':
+          description: Loss date is in the future, or the policy was not in force on the loss date.
+
+  /claims/{claimReference}:
+    put:
+      summary: Update an open claim
+      description: |
+        Replaces the mutable detail of an open claim. Closed claims are
+        immutable and return 409.
+      operationId: updateClaim
+      parameters:
+        - name: claimReference
+          in: path
+          required: true
+          schema:
+            type: string
+            example: CLM-2026-004417
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimRegistration'
+      responses:
+        '200':
+          description: Claim updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Claim'
+        '409':
+          description: Claim is closed and cannot be amended.
+
+components:
+  schemas:
+    Claim:
+      type: object
+      required: [claimReference, policyNumber, lossDate, lossType, status]
+      properties:
+        claimReference:
+          type: string
+          description: Allocated at registration. Unique across all intake channels.
+          example: CLM-2026-004417
+        policyNumber:
+          type: string
+          example: MOT-2291043
+        lossDate:
+          type: string
+          format: date
+          example: '2026-06-14'
+        notifiedDate:
+          type: string
+          format: date
+          example: '2026-06-17'
+        lossType:
+          type: string
+          enum: [fire, flood, theft, collision, liability]
+          example: collision
+        claimant:
+          $ref: '#/components/schemas/Claimant'
+        estimatedAmount:
+          $ref: '#/components/schemas/MonetaryAmount'
+        status:
+          type: string
+          enum: [received, under-review, approved, declined]
+          example: under-review
+
+    ClaimRegistration:
+      type: object
+      required: [policyNumber, lossDate, lossType, claimant]
+      properties:
+        policyNumber:
+          type: string
+          example: MOT-2291043
+        lossDate:
+          type: string
+          format: date
+          example: '2026-06-14'
+        lossType:
+          type: string
+          enum: [fire, flood, theft, collision, liability]
+          example: collision
+        lossDescription:
+          type: string
+          maxLength: 2000
+          example: Rear-ended while stationary at traffic lights on the A34.
+        claimant:
+          $ref: '#/components/schemas/Claimant'
+        estimatedAmount:
+          $ref: '#/components/schemas/MonetaryAmount'
+
+    Claimant:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          example: Priya Raman
+        contactEmail:
+          type: string
+          format: email
+          example: priya.raman@example.test
+        relationshipToPolicyholder:
+          type: string
+          enum: [policyholder, named-driver, third-party, beneficiary]
+          example: policyholder
+
+    MonetaryAmount:
+      type: object
+      required: [value, currency]
+      properties:
+        value:
+          type: number
+          format: double
+          example: 4750.00
+        currency:
+          type: string
+          example: GBP

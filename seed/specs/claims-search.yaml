@@ -1,0 +1,182 @@
+openapi: 3.0.3
+info:
+  title: Claims Search API
+  version: 1.0.0
+  description: |
+    Queries the claims index across policies and books of business. This API
+    models *queries and result sets*, not claims themselves — a result is a
+    lightweight projection, and the caller follows `claimReference` into Claims
+    Intake for full detail.
+servers:
+  - url: https://api.example-insurer.test/claims-search/v1
+
+paths:
+  /claim-search:
+    get:
+      summary: Run a simple claim search
+      description: |
+        Query-string form, for the common case of a few filters. Anything
+        requiring nested criteria should use the POST form instead — URL length
+        limits make long query strings unreliable.
+      operationId: searchClaims
+      parameters:
+        - name: lossType
+          in: query
+          schema:
+            type: string
+            enum: [fire, flood, theft, collision, liability]
+        - name: lossDateFrom
+          in: query
+          schema:
+            type: string
+            format: date
+            example: '2026-01-01'
+        - name: lossDateTo
+          in: query
+          schema:
+            type: string
+            format: date
+            example: '2026-06-30'
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+      responses:
+        '200':
+          description: Matching claims, most relevant first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResults'
+
+    post:
+      summary: Run a structured claim search
+      description: |
+        Accepts the full criteria object. Preferred for saved searches and for
+        anything a caller intends to re-run, since the body round-trips exactly.
+      operationId: searchClaimsStructured
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchCriteria'
+      responses:
+        '200':
+          description: Matching claims.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResults'
+        '400':
+          description: Criteria are mutually exclusive or the date range is inverted.
+
+  /claim-search/saved/{searchId}:
+    put:
+      summary: Save or replace a named search
+      description: |
+        Saved searches belong to the calling user. Overwriting is intentional —
+        handlers iterate on a query until it is right rather than accumulating
+        near-duplicates.
+      operationId: saveSearch
+      parameters:
+        - name: searchId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: high-value-flood-2026
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchCriteria'
+      responses:
+        '200':
+          description: Saved search replaced.
+        '201':
+          description: Saved search created.
+
+components:
+  schemas:
+    SearchCriteria:
+      type: object
+      description: All fields are optional; omitting everything matches the whole index.
+      properties:
+        freeText:
+          type: string
+          description: Matched against loss description and claimant name.
+          example: rear-ended traffic lights
+        lossType:
+          type: array
+          items:
+            type: string
+            enum: [fire, flood, theft, collision, liability]
+          example: [flood, fire]
+        lossDateFrom:
+          type: string
+          format: date
+          example: '2026-01-01'
+        lossDateTo:
+          type: string
+          format: date
+          example: '2026-06-30'
+        minAmount:
+          type: number
+          format: double
+          example: 10000
+        maxAmount:
+          type: number
+          format: double
+          example: 250000
+        status:
+          type: array
+          items:
+            type: string
+            enum: [received, under-review, approved, declined]
+
+    SearchResults:
+      type: object
+      required: [totalMatches, page, results]
+      properties:
+        totalMatches:
+          type: integer
+          example: 143
+        page:
+          type: integer
+          example: 1
+        pageSize:
+          type: integer
+          example: 25
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchHit'
+
+    SearchHit:
+      type: object
+      description: A projection of a claim, deliberately narrower than the Claim resource.
+      required: [claimReference, relevanceScore]
+      properties:
+        claimReference:
+          type: string
+          example: CLM-2026-004417
+        policyNumber:
+          type: string
+          example: MOT-2291043
+        lossDate:
+          type: string
+          format: date
+          example: '2026-06-14'
+        estimatedValue:
+          type: number
+          format: double
+          example: 4750.00
+        relevanceScore:
+          type: number
+          format: float
+          description: 0.0 to 1.0. Reflects text match quality, not claim importance.
+          example: 0.87

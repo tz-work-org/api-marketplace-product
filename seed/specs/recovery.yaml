@@ -1,0 +1,185 @@
+openapi: 3.0.3
+info:
+  title: Recovery API
+  version: 1.0.0
+  description: |
+    Pursues money back after a claim has been paid — subrogation against a
+    liable third party, salvage disposal, and uninsured loss recovery. This API
+    models *an adversarial process with an external party*, so it carries
+    litigation state that no other claims API does.
+servers:
+  - url: https://api.example-insurer.test/recovery/v1
+
+paths:
+  /recoveries:
+    get:
+      summary: List recovery cases
+      description: |
+        Filterable by litigation status, because the legal team works a very
+        different queue from routine salvage.
+      operationId: listRecoveries
+      parameters:
+        - name: claimReference
+          in: query
+          schema:
+            type: string
+            example: CLM-2026-004417
+        - name: inLitigation
+          in: query
+          schema:
+            type: boolean
+        - name: recoveryType
+          in: query
+          schema:
+            type: string
+            enum: [subrogation, salvage, deductible, uninsured-loss]
+      responses:
+        '200':
+          description: Matching recovery cases.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RecoveryCase'
+
+    post:
+      summary: Open a recovery case
+      description: |
+        A recovery may only be opened against a settled claim — there is nothing
+        to recover before money has gone out.
+      operationId: openRecovery
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryRequest'
+      responses:
+        '201':
+          description: Recovery case opened.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryCase'
+        '409':
+          description: Claim has not been settled, so no recovery can be pursued.
+
+  /recoveries/{recoveryId}:
+    put:
+      summary: Update recovery progress
+      description: |
+        Used to record part-payments from the third party and to move a case in
+        or out of litigation. Recovered amounts accumulate; sending a lower
+        figure than previously recorded is rejected.
+      operationId: updateRecovery
+      parameters:
+        - name: recoveryId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: REC-4471
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryProgress'
+      responses:
+        '200':
+          description: Recovery updated.
+        '422':
+          description: Recovered amount is lower than the amount already recorded.
+
+components:
+  schemas:
+    RecoveryCase:
+      type: object
+      required: [recoveryId, claimReference, recoveryType, amountSought]
+      properties:
+        recoveryId:
+          type: string
+          example: REC-4471
+        claimReference:
+          type: string
+          example: CLM-2026-004417
+        recoveryType:
+          type: string
+          enum: [subrogation, salvage, deductible, uninsured-loss]
+          example: subrogation
+        thirdParty:
+          $ref: '#/components/schemas/ThirdParty'
+        amountSought:
+          type: number
+          format: double
+          example: 4310.55
+        amountRecovered:
+          type: number
+          format: double
+          description: Cumulative. Never decreases.
+          example: 2100.00
+        inLitigation:
+          type: boolean
+          example: false
+        expectedCloseDate:
+          type: string
+          format: date
+          example: '2026-11-30'
+        outcome:
+          type: string
+          enum: [open, recovered-in-full, recovered-in-part, written-off, time-barred]
+          example: open
+
+    RecoveryRequest:
+      type: object
+      required: [claimReference, recoveryType, amountSought]
+      properties:
+        claimReference:
+          type: string
+          example: CLM-2026-004417
+        recoveryType:
+          type: string
+          enum: [subrogation, salvage, deductible, uninsured-loss]
+          example: subrogation
+        thirdParty:
+          $ref: '#/components/schemas/ThirdParty'
+        amountSought:
+          type: number
+          format: double
+          example: 4310.55
+
+    RecoveryProgress:
+      type: object
+      properties:
+        amountRecovered:
+          type: number
+          format: double
+          example: 2100.00
+        inLitigation:
+          type: boolean
+          example: true
+        outcome:
+          type: string
+          enum: [open, recovered-in-full, recovered-in-part, written-off, time-barred]
+        note:
+          type: string
+          example: Third-party insurer admitted liability in part; 50% offered.
+
+    ThirdParty:
+      type: object
+      description: The party we are recovering from, not our own policyholder.
+      required: [name]
+      properties:
+        name:
+          type: string
+          example: D. Okafor
+        insurerName:
+          type: string
+          example: Northgate General Insurance
+        insurerPolicyReference:
+          type: string
+          example: NG-88104229
+        liabilityAdmitted:
+          type: boolean
+          example: false
