@@ -15,13 +15,27 @@ before `models.py`.
 
 ## Usage
 
-```bash
-set -a; source .env; set +a          # SWAGGERHUB_API_KEY, SWAGGERHUB_ORG
+First time only — create the virtual environment and install the two dependencies:
 
-python3 seed/seed.py --dry-run       # print what would happen, call nothing
-python3 seed/seed.py                 # create and publish
-python3 seed/seed.py --teardown --confirm
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
+
+Then:
+
+```bash
+set -a; source .env; set +a               # SWAGGERHUB_API_KEY, SWAGGERHUB_ORG
+
+.venv/bin/python seed/seed.py --dry-run   # print what would happen, call nothing
+.venv/bin/python seed/seed.py             # create and publish
+.venv/bin/python seed/seed.py --teardown --confirm
+```
+
+Use `.venv/bin/python`, not a bare `python3`. A system `python3` will not have
+`requests` installed and the run fails on import. Activating the environment
+(`source .venv/bin/activate`) works too, and then plain `python` is correct —
+inside an activated environment `python` is guaranteed to be the right one.
 
 Teardown only removes names declared in `SEED_APIS` and `SEED_PROJECTS`. Anything
 else in the organisation is left alone.
