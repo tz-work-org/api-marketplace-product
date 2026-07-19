@@ -234,6 +234,43 @@ protect. The unavoidable sequence:
 
 ---
 
+## Runtime targets
+
+The publisher must run unmodified under **GitHub Actions, Jenkins, and AWS Lambda**. The
+organisation is migrating from Jenkins to GitHub Actions and that infrastructure is not ready, so
+no demonstration should be blocked by which environment happens to be available.
+
+Three rules keep the core free of runner knowledge. They are review concerns — nothing enforces
+them mechanically, so they belong in every code review:
+
+1. **No `sys.exit()` outside the entry point.** Core functions return or raise. §A.9's exit codes
+   are a CLI concern; Lambda returns the same value as a dict.
+2. **No `os.environ` access outside one configuration function.** Read once, pass values in.
+3. **No printing of decisions from inside the logic.** The reconciler returns operations; the
+   entry point formats them.
+
+Full reasoning, options considered, and the §A.12 module-table deviation this introduces:
+[ADR-0001](docs/adr/0001-one-codebase-three-runners.md).
+
+### Where each task can run
+
+| Task | Needs network | Work laptop |
+|---|---|---|
+| Edit manifests, schema validation | no | ✅ |
+| `reconciler.py` unit tests | **no, by design** | ✅ |
+| Generate `CODEOWNERS` | no | ✅ |
+| `plan` / `apply` / `publish` | yes | ❌ — run in CI or Lambda |
+| Seed fixture utility | yes | ❌ — trial org only, run locally |
+
+The author's work laptop cannot reach the SmartBear APIs. §A.12's rule that `reconciler.py`
+performs no I/O means the entire diff engine remains developable and testable there — that rule
+is now load-bearing for a reason beyond unit-test convenience.
+
+## Architecture decisions
+
+Decisions that shape the code live in `docs/adr/`, numbered and immutable once accepted. Supersede
+an ADR with a new one rather than editing a decision that has already been acted on.
+
 ## Working agreement
 
 - Never commit `.env`. It is gitignored; keep it that way.
