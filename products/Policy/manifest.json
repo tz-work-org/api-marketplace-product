@@ -1,0 +1,37 @@
+{
+  "productMetadata": {
+    "description": "APIs for policy issuance and mid-term endorsements.",
+    "slug": "policy",
+    "public": false,
+    "hidden": false,
+    "autoPublish": false,
+    "owner": {
+      "name": "Thiru",
+      "email": "gpt4tjanfrost@outlook.com",
+      "githubHandle": "techwiththiru"
+    }
+  },
+  "contentMetadata": [
+    {
+      "order": 1,
+      "name": "Start Here",
+      "slug": "getting-started",
+      "type": "markdown",
+      "contentUrl": "getting-started.md"
+    },
+    {
+      "order": 2,
+      "name": "Policy Issuance API",
+      "slug": "policy-issuance-api",
+      "type": "apiUrl",
+      "contentUrl": "https://api.swaggerhub.com/apis/sparklayerinc-55d/policy-issuance-api/1.0.0/swagger.json"
+    },
+    {
+      "order": 3,
+      "name": "Policy Endorsement API",
+      "slug": "policy-endorsement-api",
+      "type": "apiUrl",
+      "contentUrl": "https://api.swaggerhub.com/apis/sparklayerinc-55d/policy-endorsement-api/1.0.0/swagger.json"
+    }
+  ]
+}
