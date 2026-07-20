@@ -116,6 +116,81 @@ def creates_of(client, method):
     return [call for call in client.calls if call[0] == method]
 
 
+# --- a handful of products (§A.15 step 7, ADR-0003) ------------------------
+#
+# The publisher is a whole-repo reconciler, so a run of several products is the
+# normal case, not a special one. These pin that a batch stays correct: products
+# created independently, each with its own section, and ids never leaking from
+# one product to another.
+
+
+def test_five_products_are_each_created_with_their_own_section():
+    products = [
+        product("claims", [page("getting-started", "GS", 1, "# c"), api_ref("intake", "Intake", 2, "https://api/a")]),
+        product("policy", [page("getting-started", "GS", 1, "# p"), api_ref("issuance", "Issuance", 2, "https://api/b")]),
+        product("party", [page("getting-started", "GS", 1, "# pa")]),
+        product("recovery", [api_ref("recovery", "Recovery", 1, "https://api/c")]),
+        product("claims-tracking", [page("getting-started", "GS", 1, "# ct")]),
+    ]
+    client = FakePortalClient()
+
+    apply(reconcile(products, []), [], client, "portal-1", log=lambda op: None)
+
+    created = {call[2] for call in creates_of(client, "create_product")}
+    assert created == {"claims", "policy", "party", "recovery", "claims-tracking"}
+    # every product has at least one entry, so each needs its section fetched once,
+    # and each section is fetched under that product's own (distinct) new id
+    sections = [call[1] for call in client.calls if call[0] == "get_default_section_id"]
+    assert len(sections) == len(set(sections)) == 5
+
+
+def test_a_mixed_batch_updates_the_existing_product_and_creates_the_new_ones():
+    existing = replace(product("claims", description="old words"), id="prod-claims")
+    desired = [
+        product("claims", description="new words"),  # exists → update
+        product("policy", [page("getting-started", "GS", 1, "# p")]),  # new → create
+        product("party", [api_ref("contact", "Contact", 1, "https://api/x")]),  # new → create
+    ]
+    client = FakePortalClient()
+
+    apply(reconcile(desired, [existing]), [existing], client, "portal-1", log=lambda op: None)
+
+    assert ("update_product", "prod-claims", ("description",)) in client.calls
+    created = {call[2] for call in creates_of(client, "create_product")}
+    assert created == {"policy", "party"}  # claims was updated, not recreated
+
+
+def test_ids_do_not_leak_between_products_sharing_an_entry_slug():
+    """Two products each with an `overview` and a child `detail` under it. Each
+    child must resolve to its *own* product's overview id, never the other's —
+    the id maps are scoped by (product_slug, entry_slug)."""
+    def with_overview_and_child(slug):
+        return product(
+            slug,
+            [
+                page("overview", "Overview", 1, "# o"),
+                page("detail", "Detail", 1, "# d", parent="overview"),
+            ],
+        )
+
+    client = FakePortalClient()
+    apply(
+        reconcile([with_overview_and_child("policy"), with_overview_and_child("party")], []),
+        [],
+        client,
+        "portal-1",
+        log=lambda op: None,
+    )
+
+    creates = creates_of(client, "create_toc_entry")
+    # policy is created first (prod-1 → sec-prod-1), party second (prod-2 → sec-prod-2)
+    policy_detail = next(c for c in creates if c[1] == "sec-prod-1" and c[2] == "detail")
+    party_detail = next(c for c in creates if c[1] == "sec-prod-2" and c[2] == "detail")
+    # policy's overview is the first toc created (toc-1); party's is the third (toc-3)
+    assert policy_detail[3] == "toc-1"  # policy's own overview
+    assert party_detail[3] == "toc-3"  # party's own overview, not policy's toc-1
+
+
 # --- creating a whole product ----------------------------------------------
 
 

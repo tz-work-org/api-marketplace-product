@@ -1,0 +1,37 @@
+{
+  "productMetadata": {
+    "description": "APIs for searching claims and tracking their status.",
+    "slug": "claims-tracking",
+    "public": false,
+    "hidden": false,
+    "autoPublish": false,
+    "owner": {
+      "name": "Thiru",
+      "email": "gpt4tjanfrost@outlook.com",
+      "githubHandle": "techwiththiru"
+    }
+  },
+  "contentMetadata": [
+    {
+      "order": 1,
+      "name": "Getting Started",
+      "slug": "getting-started",
+      "type": "markdown",
+      "contentUrl": "getting-started.md"
+    },
+    {
+      "order": 2,
+      "name": "Claims Search API",
+      "slug": "claims-search-api",
+      "type": "apiUrl",
+      "contentUrl": "https://api.swaggerhub.com/apis/sparklayerinc-55d/claims-search-api/1.0.0/swagger.json"
+    },
+    {
+      "order": 3,
+      "name": "Claims Status API",
+      "slug": "claims-status-api",
+      "type": "apiUrl",
+      "contentUrl": "https://api.swaggerhub.com/apis/sparklayerinc-55d/claims-status-api/1.0.0/swagger.json"
+    }
+  ]
+}

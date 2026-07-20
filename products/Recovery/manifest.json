@@ -1,0 +1,30 @@
+{
+  "productMetadata": {
+    "description": "APIs for subrogation and recovery of claim costs.",
+    "slug": "recovery",
+    "public": false,
+    "hidden": false,
+    "autoPublish": false,
+    "owner": {
+      "name": "Thiru",
+      "email": "gpt4tjanfrost@outlook.com",
+      "githubHandle": "techwiththiru"
+    }
+  },
+  "contentMetadata": [
+    {
+      "order": 1,
+      "name": "Getting Started",
+      "slug": "getting-started",
+      "type": "markdown",
+      "contentUrl": "getting-started.md"
+    },
+    {
+      "order": 2,
+      "name": "Recovery API",
+      "slug": "recovery-api",
+      "type": "apiUrl",
+      "contentUrl": "https://api.swaggerhub.com/apis/sparklayerinc-55d/recovery-api/1.0.0/swagger.json"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "productMetadata": {
+    "description": "APIs for party contact details, search and deduplication.",
+    "slug": "party",
+    "public": false,
+    "hidden": false,
+    "autoPublish": false,
+    "owner": {
+      "name": "Thiru",
+      "email": "gpt4tjanfrost@outlook.com",
+      "githubHandle": "techwiththiru"
+    }
+  },
+  "contentMetadata": [
+    {
+      "order": 1,
+      "name": "Getting Started",
+      "slug": "getting-started",
+      "type": "markdown",
+      "contentUrl": "getting-started.md"
+    },
+    {
+      "order": 2,
+      "name": "Party Contact API",
+      "slug": "party-contact-api",
+      "type": "apiUrl",
+      "contentUrl": "https://api.swaggerhub.com/apis/sparklayerinc-55d/party-contact-api/1.0.0/swagger.json"
+    },
+    {
+      "order": 3,
+      "name": "Party Search API",
+      "slug": "party-search-api",
+      "type": "apiUrl",
+      "contentUrl": "https://api.swaggerhub.com/apis/sparklayerinc-55d/party-search-api/1.0.0/swagger.json"
+    }
+  ]
+}
