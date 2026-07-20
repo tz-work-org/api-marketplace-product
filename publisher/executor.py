@@ -13,9 +13,12 @@ raises rather than prints. The caller logs each operation as it completes, so a
 run that fails part-way still shows what succeeded — there is no rollback, and
 re-running converges (§A.6).
 
-**MVP1 scope (§A.15 step 7): creates and updates only.** Deletion is step 9 and is
-sequenced last because it is destructive; if a `delete` somehow reaches this
-module it is refused, not performed.
+**Scope (§A.15 steps 7 + 9): creates, updates, and — behind `--prune` — deletes.**
+A delete is the soft-delete of a table-of-contents entry, and it reaches this
+module only because the guardrails above it (`--prune`, `--max-deletes`, §A.8)
+already decided it may. Product deletion is not performed here or anywhere in
+MVP1: a product missing from the repository surfaces as an orphan, never a
+delete (§A.8).
 
 The one piece of state a run threads is *portal ids*. A newly created product or
 entry has no id until the server issues one, and a child entry needs its parent's
@@ -35,9 +38,10 @@ from .portal_client import PortalClient
 class ExecutorError(RuntimeError):
     """An operation cannot be executed as asked.
 
-    Raised for the shapes MVP1 does not perform — a deletion reaching the
-    executor, or a change (an entry's content type) that is out of scope. A
-    genuine API failure is a `PortalError` from the client instead.
+    Raised for the shapes MVP1 does not perform — a product or document
+    deletion (only table-of-contents entries can be pruned, §A.8), or a change
+    (an entry's content type) that is out of scope. A genuine API failure is a
+    `PortalError` from the client instead.
     """
 
 
@@ -118,7 +122,7 @@ def _perform_product(
     else:
         raise ExecutorError(
             f"{operation.verb} product is out of MVP1 scope "
-            f"(deletion is step 9): {operation.path}"
+            f"(retire via hidden, §A.8): {operation.path}"
         )
 
 
@@ -151,10 +155,14 @@ def _perform_toc_entry(
             operation.actual.id, operation.changes, operation.desired
         )
 
+    elif operation.verb == "delete":
+        # Soft-delete, children-first (the reconciler ordered them that way), so
+        # `recursive` stays at its default False — see `delete_toc_entry`.
+        client.delete_toc_entry(operation.actual.id)
+
     else:
         raise ExecutorError(
-            f"{operation.verb} toc-entry is out of MVP1 scope "
-            f"(deletion is step 9): {operation.path}"
+            f"{operation.verb} toc-entry is out of scope: {operation.path}"
         )
 
 

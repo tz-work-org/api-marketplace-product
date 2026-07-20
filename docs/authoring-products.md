@@ -120,10 +120,11 @@ expresses them:
   API changes the product's **table of contents** — a child resource — so it shows up as a
   `CREATE`/`DELETE`/`UPDATE` on a **`toc-entry`**, not on the `product` row. The product still
   changed; the change just landed on its contents.
-- **Adding** an API works today → `CREATE toc-entry <product>/<api>`. **Re-pointing** an API to
-  a new version is an in-place `UPDATE toc-entry … (content_url)`. **Removing** an API shows as
-  an **orphan** (in the portal, absent from the repo) and is **not deleted yet** — actioned
-  removal is step 9 (`--prune`). Until then a removed API lingers on the portal.
+- **Adding** an API works → `CREATE toc-entry <product>/<api>`. **Re-pointing** an API to a new
+  version is an in-place `UPDATE toc-entry … (content_url)`. **Removing** an API shows as an
+  **orphan** by default (in the portal, absent from the repo) and is left untouched; run
+  `apply --prune` to action it as a soft-delete (`DELETE toc-entry <product>/<api>`). See
+  *Removing things* below for the guardrails.
 
 ### What is NOT an in-place update — the two footguns
 
@@ -142,13 +143,73 @@ expresses them:
 
 ---
 
-## Removing things — not yet
+## Removing things — with `--prune`
 
-Deleting a product or an entry is **not available yet** (it is the last, most careful step —
-§A.15 step 9). Today, removing an entry or a whole product from the repo shows it as an
-**orphan** in the `plan` (present in the portal, absent from the repo) but does not delete
-it. To retire a product now, set `hidden: true` rather than deleting its folder. Deletion,
-with its guardrails, comes later.
+Removing an entry (a page or an API reference) from the repo shows as an **orphan** on `plan`
+by default — present in the portal, absent from the repo — and is **left untouched** until you
+ask for it. To action the removal, run `apply --prune`: orphaned entries become soft-deletes
+(`DELETE toc-entry <product>/<entry>`).
+
+Three things make this safe (§A.8, [ADR-0002](adr/0002-removal-semantics-orphans-not-deletions.md)):
+
+- **Off by default.** No `--prune`, no deletes — a plain `apply` only ever creates and updates,
+  and orphans are shown but never touched.
+- **Bounded.** `--max-deletes N` (default 3) aborts the whole run *before anything executes* when a
+  plan wants more deletions than the ceiling. Set `--max-deletes 0` in CI to forbid deletes outright.
+- **Reversible.** The delete is *soft*: the portal keeps the entry in the draft up until the next
+  `publish`, so live consumers are unaffected until then, and a mistaken prune can be undone before
+  it goes live. Recovering one is a manual portal step today — the removed entry stays listed by the
+  API and is restorable; the publisher does not automate restore.
+
+If a prune would strip a product of its **last API reference**, `plan` and `apply` warn loudly — a
+product with no APIs is usually a mistake, not an intention.
+
+**Products are never deleted.** Removing a product folder prunes *nothing*; it stays an orphan. To
+retire a product, set `hidden: true` on its manifest instead of deleting the folder.
+
+---
+
+## Operating `--prune` — a trial PoC vs a real organisation
+
+The delete capability is one piece of code; how much it is *allowed* to do is **configuration, not
+a code change**. The same `apply --prune` a trial operator runs freely is locked down for a
+production org by turning two knobs and adding a review gate — nothing about the tool itself
+changes.
+
+| Concern | Mechanism | Trial / PoC operator | Real organisation |
+|---|---|---|---|
+| Deletes happening at all | `--prune` is opt-in; a plain `apply` never deletes | run `apply --prune` when you mean to | CI runs default `apply` — deletes are impossible without a deliberate, separate step |
+| How many at once | `--max-deletes N` aborts the whole run *before any call* | leave at the default (3) | `--max-deletes 0` forbids deletes outright, or a low ceiling gated behind a `request/APR-####` review |
+| Seeing before doing | `plan --prune` lists every delete + the empty-product warning | glance and go | mandatory `plan --prune` review before any `apply --prune` |
+| Consumer safety | the apply→publish split: prune removes from the **draft**; live survives until `publish` | — | consumers see no removal until someone runs `publish` — the point of no return |
+| Losing a whole product | product deletion is excluded; a missing folder is only an orphan | — | the worst an accidental prune can do is remove a few recoverable entries, never a product |
+
+See [ADR-0002](adr/0002-removal-semantics-orphans-not-deletions.md) for why the default is
+"report, don't destroy."
+
+### A safe CI recipe
+
+- **Pull requests:** `plan --prune` (it never applies), so a reviewer reads the exact deletes in
+  the diff. `plan` exits `2` when changes are pending — fail the check on it if deletions should
+  block merge.
+- **Merge to `main`:** `apply` **without** `--prune` — creates and updates only; orphans are
+  reported but never actioned, so removals accumulate visibly rather than firing automatically.
+- **Actioning a removal:** a separate, manually-triggered job running `apply --prune --max-deletes
+  <small>`, tied to the `request/APR-####` intake so a human has approved the removal. This is the
+  only path that deletes, and it is deliberate every time.
+
+### Undoing a prune before it publishes
+
+Because the delete is **soft and draft-only**, a mistaken prune is reversible right up until the
+next `publish` — the property that keeps a real org from being inconvenienced. The publisher does
+not automate restore; recover through the Portal API directly:
+
+1. List the product's removed entries: `GET /products/{productId}/table-of-contents/removed`
+2. Restore the one you did not mean to delete: `PATCH /table-of-contents/{tableOfContentsId}` with
+   body `{ "status": "restored" }`
+
+Do this **before** the product is published; once `publish` runs, the removal is live and this
+draft-restore path no longer applies.
 
 ---
 

@@ -13,7 +13,12 @@ import dataclasses
 import pytest
 
 from publisher.models import Document, Product, TocEntry
-from publisher.reconciler import ReconcileError, enforce_max_deletes, reconcile
+from publisher.reconciler import (
+    ReconcileError,
+    enforce_max_deletes,
+    products_emptied_by_prune,
+    reconcile,
+)
 
 
 # --- builders -------------------------------------------------------------
@@ -361,6 +366,41 @@ def test_orphans_do_not_count_against_max_deletes():
     )
 
     enforce_max_deletes(operations, max_deletes=3)  # must not raise
+
+
+# --- emptied-product warning (§A.8) ----------------------------------------
+
+
+def test_pruning_a_products_last_api_reference_flags_it_as_emptied():
+    """claims keeps only a page in the manifest; pruning removes its one API
+    reference, leaving consumers an product with no APIs — warn (§A.8)."""
+    actual = as_actual(claims())  # a page + one API reference
+    desired = product(entries=[page("getting-started", 1)])  # API reference removed
+
+    operations = reconcile([desired], [actual], prune=True)
+
+    assert products_emptied_by_prune([desired], operations) == ["claims"]
+
+
+def test_pruning_a_page_while_an_api_reference_stays_does_not_warn():
+    """The prune removes a page, not an API reference, and the product still
+    serves an API — nothing to warn about."""
+    actual = as_actual(claims())
+    desired = product(entries=[api("claims-search", 2)])  # the page is removed
+
+    operations = reconcile([desired], [actual], prune=True)
+
+    assert products_emptied_by_prune([desired], operations) == []
+
+
+def test_pruning_one_of_several_api_references_does_not_warn():
+    """Removing one API reference is fine while another remains."""
+    actual = as_actual(product(entries=[api("a", 1), api("b", 2)]))
+    desired = product(entries=[api("a", 1)])  # b removed, a stays
+
+    operations = reconcile([desired], [actual], prune=True)
+
+    assert products_emptied_by_prune([desired], operations) == []
 
 
 # --- document bodies -------------------------------------------------------

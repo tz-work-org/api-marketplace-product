@@ -35,7 +35,12 @@ from .models import (
     ValidationMessage,
 )
 from .portal_client import PortalClient, PortalError
-from .reconciler import ReconcileError, enforce_max_deletes, reconcile
+from .reconciler import (
+    ReconcileError,
+    enforce_max_deletes,
+    products_emptied_by_prune,
+    reconcile,
+)
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -219,6 +224,9 @@ def run_plan(
     for operation in operations:
         print(describe_operation(operation))
 
+    for slug in products_emptied_by_prune(desired, operations):
+        print(f"# WARNING: prune leaves product '{slug}' with no API references (§A.8)")
+
     actionable = [op for op in operations if op.verb != "orphan"]
     orphan_count = len(operations) - len(actionable)
     print(f"# {len(actionable)} change(s) pending, {orphan_count} orphan(s)")
@@ -226,14 +234,23 @@ def run_plan(
     return EXIT_CHANGES_PENDING if actionable else EXIT_OK
 
 
-def run_apply(products_root: Path, client: PortalClient, subdomain: str) -> int:
+def run_apply(
+    products_root: Path,
+    client: PortalClient,
+    subdomain: str,
+    prune: bool = False,
+    max_deletes: int = DEFAULT_MAX_DELETES,
+) -> int:
     """Make the portal match the repository, then report what was done.
 
     The same load-and-reconcile as `plan`, but the operations are executed
-    instead of printed. Pruning is off (§A.15 step 7): creates and updates only,
-    so deletions never arise — deletion is step 9, sequenced last because it is
-    destructive. Orphans are shown but left untouched, exactly as `plan` shows
-    them.
+    instead of printed. Pruning is off by default (§A.8): creates and updates
+    only, and portal-only entries are shown as orphans, left untouched — exactly
+    as `plan` shows them. With `--prune` those entries become soft-deletes, the
+    one destructive path, still bounded by `--max-deletes`: exceeding it aborts
+    the whole run before anything executes, rather than deleting part-way. A
+    prune that would strip a product's last API reference is warned about,
+    loudly, before it runs.
 
     Each operation is logged as it completes, so a run that fails part-way still
     shows what succeeded; there is no rollback and re-running converges (§A.6).
@@ -243,7 +260,12 @@ def run_apply(products_root: Path, client: PortalClient, subdomain: str) -> int:
     portal_id = client.get_portal_id(subdomain)
     actual = load_actual_state(client, portal_id, {p.slug for p in desired})
 
-    operations = reconcile(desired, actual, prune=False)
+    operations = reconcile(desired, actual, prune=prune)
+    enforce_max_deletes(operations, max_deletes)
+
+    for slug in products_emptied_by_prune(desired, operations):
+        print(f"# WARNING: prune leaves product '{slug}' with no API references (§A.8)")
+
     actionable = [op for op in operations if op.verb != "orphan"]
     orphans = [op for op in operations if op.verb == "orphan"]
 
@@ -393,13 +415,27 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
 
     apply_command = subcommands.add_parser(
         "apply",
-        help="Make the portal match the repository (creates and updates only).",
+        help="Make the portal match the repository. Deletes only with --prune.",
     )
     apply_command.add_argument(
         "--products",
         type=Path,
         default=DEFAULT_PRODUCTS_ROOT,
         help="Directory holding product folders (default: products).",
+    )
+    apply_command.add_argument(
+        "--prune",
+        action="store_true",
+        help="Soft-delete portal-only entries instead of leaving them as orphans "
+        "(§A.8). Off by default; deletes are the only destructive operation.",
+    )
+    apply_command.add_argument(
+        "--max-deletes",
+        type=int,
+        default=DEFAULT_MAX_DELETES,
+        help=f"Abort before executing anything if the plan wants more than this "
+        f"many deletions (default: {DEFAULT_MAX_DELETES}, §A.8). Set 0 to forbid "
+        f"deletes outright.",
     )
 
     publish = subcommands.add_parser(
@@ -439,7 +475,13 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.command == "apply":
             api_key, subdomain = configuration_from_environment()
             client = PortalClient(api_key)
-            return run_apply(arguments.products, client, subdomain)
+            return run_apply(
+                arguments.products,
+                client,
+                subdomain,
+                prune=arguments.prune,
+                max_deletes=arguments.max_deletes,
+            )
         if arguments.command == "publish":
             api_key, subdomain = configuration_from_environment()
             client = PortalClient(api_key)

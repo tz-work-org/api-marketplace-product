@@ -7,6 +7,8 @@ VALID_MANIFEST so "unchanged" means genuinely identical on both sides.
 
 from __future__ import annotations
 
+import copy
+
 import pytest
 from conftest import VALID_MANIFEST, manifest_with, write_product
 
@@ -200,6 +202,23 @@ def test_exceeding_max_deletes_aborts_before_any_operation_is_printed(
         run_plan(products_root, portal, "acme", prune=True, max_deletes=3)
 
     assert capsys.readouterr().out == ""
+
+
+def test_prune_emptying_a_product_of_all_apis_warns_loudly(products_root, capsys):
+    """§A.8: pruning a product's last API reference must warn. The manifest keeps
+    only the page; the portal still carries the API reference, so with prune on it
+    becomes a delete that leaves the product with no APIs for consumers."""
+    page_only = copy.deepcopy(VALID_MANIFEST)
+    page_only["contentMetadata"] = [VALID_MANIFEST["contentMetadata"][0]]  # the markdown page
+    write_product(products_root, "Claims", page_only)
+    portal = portal_matching_the_valid_manifest()  # page + the now-orphan API reference
+
+    exit_code = run_plan(products_root, portal, "acme", prune=True)
+
+    output = capsys.readouterr().out
+    assert exit_code == EXIT_CHANGES_PENDING
+    assert "DELETE toc-entry claims/claims-intake-api" in output
+    assert "WARNING" in output and "no API references" in output
 
 
 # --- the actual-state loader ------------------------------------------------

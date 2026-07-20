@@ -19,7 +19,7 @@ from conftest import VALID_MANIFEST, write_product
 from publisher.cli import EXIT_OK, run_apply
 from publisher.executor import ExecutorError, apply
 from publisher.models import Document, Operation, Product, TocEntry
-from publisher.reconciler import reconcile
+from publisher.reconciler import ReconcileError, reconcile
 
 
 # --- fakes and builders -----------------------------------------------------
@@ -81,6 +81,10 @@ class FakePortalClient:
 
     def update_document(self, document_id, content) -> None:
         self.calls.append(("update_document", document_id, content))
+
+    # deletes
+    def delete_toc_entry(self, toc_id, recursive=False) -> None:
+        self.calls.append(("delete_toc_entry", toc_id, recursive))
 
 
 def page(slug, title, order, body, parent=None) -> TocEntry:
@@ -323,7 +327,46 @@ def test_a_renamed_entry_patches_its_title():
     assert ("update_toc_entry", "toc-9", ("title",)) in client.calls
 
 
-# --- refusals (§A.15: deletion is step 9; type flips out of scope) ----------
+# --- pruning: soft-delete (§A.15 step 9, §A.8) -----------------------------
+
+
+def test_a_pruned_entry_is_soft_deleted_by_its_portal_id():
+    """With prune on, an entry the repo dropped becomes a delete; the executor
+    calls the soft-delete with the entry's own id and recursive left False."""
+    existing = replace(api_ref("old", "Old", 1, "https://api/x"), id="toc-old")
+    actual = replace(product("claims", [existing]), id="prod-9")
+    desired = replace(product("claims", []), id="prod-9")
+    client = FakePortalClient()
+
+    apply(reconcile([desired], [actual], prune=True), [actual], client, "portal-1", log=lambda op: None)
+
+    assert ("delete_toc_entry", "toc-old", False) in client.calls
+
+
+def test_pruned_entries_are_deleted_children_before_parents():
+    """The reconciler orders removals child-first so each is a leaf when deleted;
+    the executor must preserve that order (recursive stays False)."""
+    parent = replace(
+        page("guides", "Guides", 1, "# g"),
+        id="toc-guides",
+        document=Document(content="# g", id="doc-guides"),
+    )
+    child = replace(
+        page("overview", "Overview", 1, "# o", parent="guides"),
+        id="toc-overview",
+        document=Document(content="# o", id="doc-overview"),
+    )
+    actual = replace(product("claims", [parent, child]), id="prod-9")
+    desired = replace(product("claims", []), id="prod-9")
+    client = FakePortalClient()
+
+    apply(reconcile([desired], [actual], prune=True), [actual], client, "portal-1", log=lambda op: None)
+
+    deleted = [call[1] for call in client.calls if call[0] == "delete_toc_entry"]
+    assert deleted == ["toc-overview", "toc-guides"]  # child first, then its parent
+
+
+# --- refusals (type flips and product deletion stay out of scope) -----------
 
 
 def test_changing_an_entrys_content_type_is_refused():
@@ -340,11 +383,13 @@ def test_changing_an_entrys_content_type_is_refused():
         apply(reconcile([desired], [actual]), [actual], FakePortalClient(), "portal-1", log=lambda op: None)
 
 
-def test_a_delete_operation_is_refused_not_performed():
-    delete = Operation(verb="delete", resource="toc-entry", path="claims/old")
+def test_a_product_delete_is_refused_not_performed():
+    """The reconciler never emits this — a missing product is an orphan (§A.8) —
+    but the executor refuses a product delete defensively; retirement is hidden."""
+    delete = Operation(verb="delete", resource="product", path="claims")
     client = FakePortalClient()
 
-    with pytest.raises(ExecutorError, match="step 9"):
+    with pytest.raises(ExecutorError, match="hidden"):
         apply([delete], [], client, "portal-1", log=lambda op: None)
 
     assert client.calls == []  # nothing was attempted
@@ -376,3 +421,71 @@ def test_run_apply_on_an_empty_portal_creates_everything_and_exits_zero(
     assert any(call[0] == "create_product" for call in client.calls)
     # the markdown page's body ("# Hello", from write_product) is written
     assert any(call[0] == "update_document" and call[2] == "# Hello" for call in client.calls)
+
+
+# --- run_apply --prune end to end (cli wiring, §A.8) ------------------------
+
+
+def portal_with_orphans(*orphan_slugs) -> FakePortalClient:
+    """A fake mirroring conftest.VALID_MANIFEST, plus one portal-only page per
+    slug — the entries a prune would remove. The read side lets `run_apply` load
+    actual state and converge on everything but the orphans; the write side
+    records the deletes."""
+    description = VALID_MANIFEST["productMetadata"]["description"]
+    intake_url = VALID_MANIFEST["contentMetadata"][1]["contentUrl"]
+    entries = [
+        TocEntry(slug="getting-started", title="Getting Started", order=1,
+                 content_type="markdown", content_url="",
+                 document=Document(content="", id="doc-1"), id="toc-1"),
+        TocEntry(slug="claims-intake-api", title="Claims Intake API", order=2,
+                 content_type="apiUrl", content_url=intake_url, id="toc-2"),
+    ]
+    documents = {"doc-1": Document(content="# Hello", id="doc-1")}
+    for order, slug in enumerate(orphan_slugs, start=3):
+        entries.append(
+            TocEntry(slug=slug, title=slug.title(), order=order,
+                     content_type="markdown", content_url="",
+                     document=Document(content="", id=f"doc-{slug}"), id=f"toc-{slug}")
+        )
+        documents[f"doc-{slug}"] = Document(content="stale", id=f"doc-{slug}")
+    return FakePortalClient(
+        products=[Product(name="Claims", slug="claims", description=description, id="prod-1")],
+        entries=entries,
+        documents=documents,
+    )
+
+
+def test_run_apply_prune_soft_deletes_the_orphan(products_root, capsys):
+    write_product(products_root, "Claims", VALID_MANIFEST)
+    client = portal_with_orphans("old-page")
+
+    exit_code = run_apply(products_root, client, "acme", prune=True)
+
+    output = capsys.readouterr().out
+    assert exit_code == EXIT_OK
+    assert ("delete_toc_entry", "toc-old-page", False) in client.calls
+    assert "DELETE toc-entry claims/old-page" in output
+
+
+def test_run_apply_without_prune_leaves_the_orphan_untouched(products_root, capsys):
+    write_product(products_root, "Claims", VALID_MANIFEST)
+    client = portal_with_orphans("old-page")
+
+    exit_code = run_apply(products_root, client, "acme")  # prune off by default
+
+    output = capsys.readouterr().out
+    assert exit_code == EXIT_OK
+    assert not any(call[0] == "delete_toc_entry" for call in client.calls)
+    assert "ORPHAN toc-entry claims/old-page" in output
+
+
+def test_run_apply_prune_exceeding_max_deletes_aborts_before_any_delete(products_root):
+    """The §A.8 guardrail fires before the executor runs, so not one delete is
+    attempted when the plan wants more than the ceiling allows."""
+    write_product(products_root, "Claims", VALID_MANIFEST)
+    client = portal_with_orphans("old-0", "old-1", "old-2", "old-3")  # 4 deletes
+
+    with pytest.raises(ReconcileError, match="4 deletions"):
+        run_apply(products_root, client, "acme", prune=True, max_deletes=3)
+
+    assert not any(call[0] == "delete_toc_entry" for call in client.calls)

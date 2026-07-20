@@ -78,6 +78,31 @@ def enforce_max_deletes(operations: list[Operation], max_deletes: int) -> None:
         )
 
 
+def products_emptied_by_prune(
+    desired: list[Product], operations: list[Operation]
+) -> list[str]:
+    """Slugs of products a prune would strip of their last API reference (§A.8).
+
+    Deleting an API reference is what leaves a product empty to consumers, so
+    the check looks only at `delete` operations that remove an API-reference
+    entry, and only fires when the product's desired state keeps none. Pure —
+    it returns the slugs; the caller decides how loudly to warn (ADR-0001 #3).
+    """
+    losing_api_refs = {
+        operation.path.split("/", 1)[0]
+        for operation in operations
+        if operation.verb == "delete"
+        and operation.resource == "toc-entry"
+        and operation.actual is not None
+        and operation.actual.is_api_reference
+    }
+    return [
+        product.slug
+        for product in desired
+        if product.slug in losing_api_refs and not product.api_references
+    ]
+
+
 # --- one product ----------------------------------------------------------
 
 
