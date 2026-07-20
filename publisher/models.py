@@ -3,10 +3,6 @@
 This module knows about nothing. It imports no other publisher module, makes no
 HTTP calls, and touches no files. Everything here is a frozen dataclass, so a
 loaded manifest cannot be mutated half-way through a reconcile.
-
-`Operation` is named in the module table (§A.12) but is not defined yet — it
-belongs to the reconciler, which does not exist. Adding it now would be an
-extension point for a hypothetical need, which §A.12 forbids.
 """
 
 from __future__ import annotations
@@ -111,3 +107,33 @@ class Product:
         product with no APIs at all (§A.8).
         """
         return tuple(entry for entry in self.entries if entry.is_api_reference)
+
+
+@dataclass(frozen=True)
+class Operation:
+    """One action the reconciler wants taken against the portal.
+
+    The reconciler emits these, `plan` prints them, and the executor performs
+    them. `verb` is one of:
+
+        create — exists in the repository but not in the portal
+        update — exists in both; `changes` names the fields that differ
+        delete — exists only in the portal, and pruning is enabled
+        orphan — exists only in the portal; shown in the plan, never executed
+
+    `resource` is `product`, `toc-entry` or `document`. `path` names the
+    subject the way a plan line reads it — `claims` for a product,
+    `claims/getting-started` for an entry or its page — so one operation logs
+    as `verb resource path` and nothing more (§A.12).
+
+    `desired` carries the repository's version of the object (absent for
+    delete and orphan); `actual` carries the portal's, which holds the id the
+    executor needs (absent for create).
+    """
+
+    verb: str
+    resource: str
+    path: str
+    desired: Product | TocEntry | Document | None = None
+    actual: Product | TocEntry | Document | None = None
+    changes: tuple[str, ...] = ()

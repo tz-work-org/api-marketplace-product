@@ -6,8 +6,8 @@ and calls it in dependency order (§A.12). Keeping the endpoint shapes in one
 readable place means that when the Portal API changes there is exactly one file
 to correct.
 
-Every endpoint here was verified against
-`frank-kilcommins/swaggerhub-portal-api/0.2.0-beta` before this file was written.
+Every endpoint here was verified against the authoritative
+`smartbear-public/swaggerhub-portal-api/0.8.0-beta` specification.
 See `.local/verification/portal-api-verification.md` for the §A.2 gate.
 
 **Read-only first (§A.15 step 4).** Only the state-fetch half exists so far:
