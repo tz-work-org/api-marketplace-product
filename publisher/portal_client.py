@@ -10,13 +10,14 @@ Every endpoint here was verified against the authoritative
 `smartbear-public/swaggerhub-portal-api/0.8.0-beta` specification.
 See `.local/verification/portal-api-verification.md` for the §A.2 gate.
 
-**Reads, creates, updates and publishes (§A.15 steps 4, 7, 8).** The state-fetch
-half resolves the portal, its products, the default section, the
+**Reads, creates, updates, publishes and deletes (§A.15 steps 4, 7, 8, 9).** The
+state-fetch half resolves the portal, its products, the default section, the
 table-of-contents entries, a document body and a product's unpublished changes;
 the write half creates and patches products, entries and documents, and publishes
-a product's draft to the live view. Deletion arrives later (step 9) — this client
-has no `DELETE` yet, by design, because deletion is destructive and sequenced
-last.
+a product's draft to the live view. The one delete is a soft-delete of a
+table-of-contents entry — the only destructive call, and it does nothing on its
+own: it runs solely when `--prune` and the §A.8 guardrails above let it through.
+Product deletion stays out of MVP1 (retire via `hidden`, §A.8).
 
 **These methods return model objects, not raw response dictionaries (§A.12).**
 The mapping from the Portal API's wire vocabulary — `title`, `parentId`, a
@@ -324,6 +325,27 @@ class PortalClient:
             _validation_message_from_payload(message)
             for message in payload.get("validationMessages", [])
         ]
+
+    # --- deletes ----------------------------------------------------------
+
+    def delete_toc_entry(self, toc_id: str, recursive: bool = False) -> None:
+        """Soft-delete one table-of-contents entry (§A.8, step 9).
+
+        The portal removes the entry from the *draft* up until the next publish,
+        so live consumers are unaffected until `publish` runs — and it lists the
+        entry at `GET /products/{id}/table-of-contents/removed`, from which a
+        mistaken prune is restorable (`PATCH status="restored"`) before it goes
+        live. `recursive` stays `False`: the executor deletes entries
+        children-first, so each is already a leaf when its turn comes, and
+        sweeping a whole subtree in one call would 404 on the children that
+        follow. Success is `204` with no body (§A.2 step-9 gate).
+        """
+        response = self.session.delete(
+            self._url(f"/table-of-contents/{toc_id}"),
+            params={"recursive": recursive},
+            timeout=TIMEOUT_SECONDS,
+        )
+        self._check(response, f"deleting toc-entry {toc_id}")
 
     # --- internals --------------------------------------------------------
 

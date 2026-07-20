@@ -55,6 +55,10 @@ class FakeSession:
         self.calls.append({"method": "PUT", "url": url, "params": params or {}})
         return self._responses.pop(0)
 
+    def delete(self, url: str, params: dict | None = None, timeout: int | None = None):
+        self.calls.append({"method": "DELETE", "url": url, "params": params or {}})
+        return self._responses.pop(0)
+
 
 def client_with(responses: list[FakeResponse]) -> PortalClient:
     """A PortalClient whose network session is replaced by a fake one."""
@@ -338,6 +342,29 @@ def test_update_product_sends_only_the_changed_fields():
     client.update_product("prod-1", ("description",), desired)
 
     assert client.session.calls[0]["json"] == {"description": "new words"}
+
+
+# --- deletes: soft-delete of a ToC entry (§A.15 step 9, §A.8) ---------------
+
+
+def test_delete_toc_entry_issues_a_soft_delete_with_recursive_false():
+    """204, no body. `recursive` stays False — the executor deletes children
+    first, so each entry is a leaf and a subtree sweep would 404 the rest."""
+    client = client_with([FakeResponse({}, status_code=204)])
+
+    client.delete_toc_entry("toc-1")
+
+    call = client.session.calls[0]
+    assert call["method"] == "DELETE"
+    assert call["url"].endswith("/table-of-contents/toc-1")
+    assert call["params"] == {"recursive": False}
+
+
+def test_delete_toc_entry_raises_naming_the_entry_on_failure():
+    client = client_with([FakeResponse({"title": "Not Found"}, status_code=404)])
+
+    with pytest.raises(PortalError, match="toc-1"):
+        client.delete_toc_entry("toc-1")
 
 
 # --- publish (§A.15 step 8) -------------------------------------------------
