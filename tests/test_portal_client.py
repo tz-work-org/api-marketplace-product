@@ -33,14 +33,22 @@ class FakeResponse:
 
 
 class FakeSession:
-    """Returns queued responses in order and records the params it was given."""
+    """Returns queued responses in order and records each call it was given."""
 
     def __init__(self, responses: list[FakeResponse]) -> None:
         self._responses = list(responses)
         self.calls: list[dict] = []
 
     def get(self, url: str, params: dict | None = None, timeout: int | None = None):
-        self.calls.append({"url": url, "params": params or {}})
+        self.calls.append({"method": "GET", "url": url, "params": params or {}})
+        return self._responses.pop(0)
+
+    def post(self, url: str, json: dict | None = None, timeout: int | None = None):
+        self.calls.append({"method": "POST", "url": url, "json": json or {}})
+        return self._responses.pop(0)
+
+    def patch(self, url: str, json: dict | None = None, timeout: int | None = None):
+        self.calls.append({"method": "PATCH", "url": url, "json": json or {}})
         return self._responses.pop(0)
 
 
@@ -124,6 +132,28 @@ def test_products_map_to_models_without_owner_or_entries():
     assert product.public is True
     assert product.owner is None  # portal has no ownership concept
     assert product.entries == ()  # entries come from a separate call
+
+
+def test_accept_header_is_permissive_for_empty_write_responses():
+    """A document patch returns no body; a strict application/json Accept makes
+    the portal answer 406 (a live apply hit this). `*/*` accepts both the empty
+    write responses and the JSON read responses (§A.2 §8.9)."""
+    client = PortalClient(api_key="unused")
+
+    assert client.session.headers["Accept"] == "*/*"
+
+
+def test_list_calls_send_no_explicit_page_size():
+    """Page-size maxima differ per endpoint (sections caps at 10, §A.2 §8.8), so
+    an explicit size risks a 400 — a live apply hit exactly that. We send only
+    the page number and let the server default the size."""
+    client = client_with([FakeResponse(page([{"id": "sec-1"}], 1, 1))])
+
+    client.get_default_section_id("prod-1")
+
+    params = client.session.calls[0]["params"]
+    assert "size" not in params
+    assert params["page"] == 1
 
 
 def test_get_default_section_id_takes_the_first():
@@ -220,3 +250,87 @@ def test_failed_response_raises_naming_the_resource():
 
     assert "reading document doc-9" in str(caught.value)
     assert caught.value.status_code == 404
+
+
+# --- writes: the create responses carry only ids, not full objects ----------
+#
+# The POST 201 bodies are `{id}` (product) and `{id, documentId}` (entry), not a
+# whole resource (§A.2 §8.7). These pin that parsing — the gap a live apply
+# found, because the read mappers were wrongly reused on create responses.
+
+
+def test_create_product_parses_the_id_only_response():
+    client = client_with([FakeResponse({"id": "prod-new"})])
+    desired = Product(name="Claims", slug="claims", description="Claims APIs")
+
+    created = client.create_product("portal-1", desired)
+
+    assert created.id == "prod-new"
+    assert created.slug == "claims"  # desired fields preserved
+    body = client.session.calls[0]["json"]
+    assert body["type"] == "new"
+    assert body["name"] == "Claims"
+    assert body["description"] == "Claims APIs"
+
+
+def test_create_page_entry_parses_id_and_document_id():
+    client = client_with([FakeResponse({"id": "toc-new", "documentId": "doc-new"})])
+    entry = TocEntry(
+        slug="getting-started",
+        title="Getting Started",
+        order=1,
+        content_type="markdown",
+        content_url="getting-started.md",
+        document=Document(content="# Hi", source_path="getting-started.md"),
+    )
+
+    created = client.create_toc_entry("sec-1", entry, parent_id=None)
+
+    assert created.id == "toc-new"
+    assert created.document.id == "doc-new"  # server id, for the body write
+    assert created.document.content == "# Hi"  # desired content preserved
+    body = client.session.calls[0]["json"]
+    assert body["type"] == "new"
+    assert body["content"] == {"type": "markdown", "source": "external"}
+
+
+def test_create_api_reference_entry_has_no_document_and_sends_its_url():
+    client = client_with([FakeResponse({"id": "toc-api"})])  # no documentId
+    entry = TocEntry(
+        slug="claims-api",
+        title="Claims API",
+        order=2,
+        content_type="apiUrl",
+        content_url="https://api.example/claims/1.0.0/swagger.json",
+    )
+
+    created = client.create_toc_entry("sec-1", entry, parent_id="toc-parent")
+
+    assert created.id == "toc-api"
+    assert created.document is None
+    body = client.session.calls[0]["json"]
+    assert body["content"] == {
+        "type": "apiUrl",
+        "url": "https://api.example/claims/1.0.0/swagger.json",
+    }
+    assert body["parentId"] == "toc-parent"
+
+
+def test_update_document_sends_content_in_the_body():
+    client = client_with([FakeResponse({})])  # empty 200, nothing to parse
+
+    client.update_document("doc-1", "# New words")
+
+    call = client.session.calls[0]
+    assert call["method"] == "PATCH"
+    assert call["url"].endswith("/documents/doc-1")
+    assert call["json"] == {"content": "# New words"}
+
+
+def test_update_product_sends_only_the_changed_fields():
+    client = client_with([FakeResponse({})])
+    desired = Product(name="Claims", slug="claims", description="new words")
+
+    client.update_product("prod-1", ("description",), desired)
+
+    assert client.session.calls[0]["json"] == {"description": "new words"}

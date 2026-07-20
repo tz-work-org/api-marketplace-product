@@ -11,11 +11,10 @@ apart from "would change things":
     1  error
     2  changes pending
 
-`validate` and `plan` exist so far. `apply` and `publish` arrive at §A.15
-steps 7 and 8, once the executor exists. This module also hosts the
-actual-state loader (§A.6 step 2): assembly of portal → products → default
-section → entries → page bodies is orchestration, and `cli` is the one module
-allowed to know every other one (§A.12).
+`validate`, `plan` and `apply` exist so far. `publish` arrives at §A.15 step 8.
+This module also hosts the actual-state loader (§A.6 step 2): assembly of
+portal → products → default section → entries → page bodies is orchestration,
+and `cli` is the one module allowed to know every other one (§A.12).
 """
 
 from __future__ import annotations
@@ -25,6 +24,7 @@ import dataclasses
 import os
 from pathlib import Path
 
+from .executor import ExecutorError, apply
 from .manifest import ManifestError, load_all_products
 from .models import Operation, Product, TocEntry
 from .portal_client import PortalClient, PortalError
@@ -71,7 +71,7 @@ def configuration_from_environment() -> tuple[str, str]:
 
 
 def load_actual_state(
-    client: PortalClient, subdomain: str, slugs_to_detail: set[str]
+    client: PortalClient, portal_id: str, slugs_to_detail: set[str]
 ) -> list[Product]:
     """Assemble what the portal currently holds.
 
@@ -79,9 +79,10 @@ def load_actual_state(
     tree — default section, entries, page bodies — is fetched only for
     products the repository also declares: they are the only ones the diff
     compares entry by entry, and each level is another round of calls.
-    """
-    portal_id = client.get_portal_id(subdomain)
 
+    Takes the portal id rather than the subdomain: the caller resolves it once
+    and shares it with the executor, which needs it to create products.
+    """
     products = []
     for product in client.list_products(portal_id):
         if product.slug in slugs_to_detail:
@@ -199,7 +200,8 @@ def run_plan(
     a parameter so tests can hand in a fake and stay off the network.
     """
     desired = load_all_products(products_root)
-    actual = load_actual_state(client, subdomain, {p.slug for p in desired})
+    portal_id = client.get_portal_id(subdomain)
+    actual = load_actual_state(client, portal_id, {p.slug for p in desired})
 
     operations = reconcile(desired, actual, prune=prune)
     enforce_max_deletes(operations, max_deletes)
@@ -215,6 +217,43 @@ def run_plan(
     print(f"# {len(actionable)} change(s) pending, {orphan_count} orphan(s)")
 
     return EXIT_CHANGES_PENDING if actionable else EXIT_OK
+
+
+def run_apply(products_root: Path, client: PortalClient, subdomain: str) -> int:
+    """Make the portal match the repository, then report what was done.
+
+    The same load-and-reconcile as `plan`, but the operations are executed
+    instead of printed. Pruning is off (§A.15 step 7): creates and updates only,
+    so deletions never arise — deletion is step 9, sequenced last because it is
+    destructive. Orphans are shown but left untouched, exactly as `plan` shows
+    them.
+
+    Each operation is logged as it completes, so a run that fails part-way still
+    shows what succeeded; there is no rollback and re-running converges (§A.6).
+    A converged repository applies nothing and exits 0 (§A.9).
+    """
+    desired = load_all_products(products_root)
+    portal_id = client.get_portal_id(subdomain)
+    actual = load_actual_state(client, portal_id, {p.slug for p in desired})
+
+    operations = reconcile(desired, actual, prune=False)
+    actionable = [op for op in operations if op.verb != "orphan"]
+    orphans = [op for op in operations if op.verb == "orphan"]
+
+    apply(actionable, actual, client, portal_id, log=_print_operation)
+
+    for operation in orphans:
+        print(describe_operation(operation))
+    print(
+        f"# {len(actionable)} change(s) applied, "
+        f"{len(orphans)} orphan(s) left untouched"
+    )
+    return EXIT_OK
+
+
+def _print_operation(operation: Operation) -> None:
+    """Log one applied operation — the same line `plan` would have shown."""
+    print(describe_operation(operation))
 
 
 # --- argument parsing and dispatch ------------------------------------------
@@ -259,6 +298,17 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         f"(default: {DEFAULT_MAX_DELETES}, §A.8).",
     )
 
+    apply_command = subcommands.add_parser(
+        "apply",
+        help="Make the portal match the repository (creates and updates only).",
+    )
+    apply_command.add_argument(
+        "--products",
+        type=Path,
+        default=DEFAULT_PRODUCTS_ROOT,
+        help="Directory holding product folders (default: products).",
+    )
+
     return parser.parse_args(argv)
 
 
@@ -278,7 +328,17 @@ def main(argv: list[str] | None = None) -> int:
                 prune=arguments.prune,
                 max_deletes=arguments.max_deletes,
             )
-    except (ManifestError, ReconcileError, ConfigurationError, PortalError) as error:
+        if arguments.command == "apply":
+            api_key, subdomain = configuration_from_environment()
+            client = PortalClient(api_key)
+            return run_apply(arguments.products, client, subdomain)
+    except (
+        ManifestError,
+        ReconcileError,
+        ConfigurationError,
+        PortalError,
+        ExecutorError,
+    ) as error:
         print(f"FAILED: {error}")
         return EXIT_ERROR
 
