@@ -10,12 +10,13 @@ Every endpoint here was verified against the authoritative
 `smartbear-public/swaggerhub-portal-api/0.8.0-beta` specification.
 See `.local/verification/portal-api-verification.md` for the §A.2 gate.
 
-**Reads then creates and updates (§A.15 steps 4, 7).** The state-fetch half
-resolves the portal, its products, the default section, the table-of-contents
-entries and a document body; the write half creates and patches products,
-entries and documents. Deletion and publishing arrive later (steps 8, 9) — this
-client has no `DELETE` yet, by design, because deletion is destructive and
-sequenced last.
+**Reads, creates, updates and publishes (§A.15 steps 4, 7, 8).** The state-fetch
+half resolves the portal, its products, the default section, the
+table-of-contents entries, a document body and a product's unpublished changes;
+the write half creates and patches products, entries and documents, and publishes
+a product's draft to the live view. Deletion arrives later (step 9) — this client
+has no `DELETE` yet, by design, because deletion is destructive and sequenced
+last.
 
 **These methods return model objects, not raw response dictionaries (§A.12).**
 The mapping from the Portal API's wire vocabulary — `title`, `parentId`, a
@@ -37,7 +38,15 @@ from dataclasses import replace
 
 import requests
 
-from .models import API_REFERENCE_TYPE, Document, Product, TocEntry
+from .models import (
+    API_REFERENCE_TYPE,
+    ContentChange,
+    Document,
+    Product,
+    TocEntry,
+    UnpublishedChanges,
+    ValidationMessage,
+)
 
 # The real portal, not one of the two auto-mocking servers listed first in the
 # specification. Those mock URLs return canned examples; this one is live state.
@@ -155,6 +164,20 @@ class PortalClient:
         )
         self._check(response, f"reading document {document_id}")
         return _document_from_payload(response.json())
+
+    def get_unpublished_changes(self, product_id: str) -> UnpublishedChanges:
+        """Return the product's draft-vs-published diff, as the portal computes it.
+
+        The platform tracks what has changed since the last publish itself
+        (§A.6), so `publish` reads this rather than diffing again. Used to show
+        what would go live and to skip a product with nothing staged.
+        """
+        response = self.session.get(
+            self._url(f"/products/{product_id}/published-content/changes"),
+            timeout=TIMEOUT_SECONDS,
+        )
+        self._check(response, f"reading unpublished changes for product {product_id}")
+        return _unpublished_changes_from_payload(response.json())
 
     # --- writes -----------------------------------------------------------
 
@@ -279,6 +302,29 @@ class PortalClient:
         )
         self._check(response, f"updating document {document_id}")
 
+    def publish_product(
+        self, product_id: str, preview: bool
+    ) -> list[ValidationMessage]:
+        """Promote a product's draft content to the live view.
+
+        With `preview=True` the portal validates the draft and reports what it
+        finds without publishing — the dry run that catches an unreachable API
+        reference before consumers would see it. With `preview=False` it
+        publishes. There is no request body; the platform already knows what has
+        changed. Returns the validation messages either way (empty when clean).
+        """
+        response = self.session.put(
+            self._url(f"/products/{product_id}/published-content"),
+            params={"preview": preview},
+            timeout=TIMEOUT_SECONDS,
+        )
+        self._check(response, f"publishing product {product_id}")
+        payload = response.json()
+        return [
+            _validation_message_from_payload(message)
+            for message in payload.get("validationMessages", [])
+        ]
+
     # --- internals --------------------------------------------------------
 
     def _url(self, path: str) -> str:
@@ -368,6 +414,39 @@ def _product_from_payload(payload: dict) -> Product:
 def _document_from_payload(payload: dict) -> Document:
     """Map a document payload to a `Document`, carrying its id and body."""
     return Document(content=payload.get("content") or "", id=payload["id"])
+
+
+def _unpublished_changes_from_payload(payload: dict) -> UnpublishedChanges:
+    """Flatten the portal's draft-vs-published diff into one list of changes.
+
+    The API groups changes by kind (`added`, `modified`, `removed`, `missing`),
+    each a list of items carrying `path`, `title` and `type`. The kind is kept on
+    each `ContentChange` so `publish` can label it. `comments` (unresolved review
+    comments) are not part of the publish decision and are ignored.
+    """
+    changes = [
+        ContentChange(
+            kind=kind,
+            path=item.get("path", ""),
+            title=item.get("title", ""),
+            content_type=item.get("type", ""),
+        )
+        for kind in ("added", "modified", "removed", "missing")
+        for item in payload.get(kind) or []
+    ]
+    return UnpublishedChanges(
+        changes=tuple(changes), reordered=payload.get("reordered", False)
+    )
+
+
+def _validation_message_from_payload(payload: dict) -> ValidationMessage:
+    """Map one publish validation message to a `ValidationMessage`."""
+    return ValidationMessage(
+        level=payload.get("level", ""),
+        message=payload.get("message", ""),
+        error_code=payload.get("errorCode") or "",
+        toc_id=payload.get("tableOfContentsId"),
+    )
 
 
 def _toc_entries_from_tree(items: list[dict]) -> list[TocEntry]:
