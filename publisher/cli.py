@@ -11,10 +11,11 @@ apart from "would change things":
     1  error
     2  changes pending
 
-`validate`, `plan` and `apply` exist so far. `publish` arrives at §A.15 step 8.
-This module also hosts the actual-state loader (§A.6 step 2): assembly of
-portal → products → default section → entries → page bodies is orchestration,
-and `cli` is the one module allowed to know every other one (§A.12).
+`validate`, `plan`, `apply` and `publish` exist. Deletions (§A.15 step 9) are the
+remaining destructive step. This module also hosts the actual-state loader (§A.6
+step 2): assembly of portal → products → default section → entries → page bodies
+is orchestration, and `cli` is the one module allowed to know every other one
+(§A.12).
 """
 
 from __future__ import annotations
@@ -26,7 +27,13 @@ from pathlib import Path
 
 from .executor import ExecutorError, apply
 from .manifest import ManifestError, load_all_products
-from .models import Operation, Product, TocEntry
+from .models import (
+    Operation,
+    Product,
+    TocEntry,
+    UnpublishedChanges,
+    ValidationMessage,
+)
 from .portal_client import PortalClient, PortalError
 from .reconciler import ReconcileError, enforce_max_deletes, reconcile
 
@@ -256,6 +263,92 @@ def _print_operation(operation: Operation) -> None:
     print(describe_operation(operation))
 
 
+def run_publish(
+    products_root: Path, client: PortalClient, subdomain: str, preview: bool = False
+) -> int:
+    """Promote each product's draft content to the live consumer view.
+
+    Publishing is product-scoped and separate from apply (§A.6): apply writes the
+    draft, publish makes it visible. With `--preview` the portal validates the
+    draft and the pending changes are shown, but nothing is published — exit 2
+    when something is staged, mirroring `plan`. A validation error (an API
+    reference whose URL will not resolve, say) is a failure, exit 1.
+
+    A product declared in the repo but not yet in the portal is skipped: apply
+    must create it before it can be published. A product with nothing staged is
+    already published and left alone.
+    """
+    desired = load_all_products(products_root)
+    portal_id = client.get_portal_id(subdomain)
+    actual_by_slug = {
+        product.slug: product for product in client.list_products(portal_id)
+    }
+
+    staged_total = 0
+    error_total = 0
+    published_total = 0
+
+    for product in desired:
+        match = actual_by_slug.get(product.slug)
+        if match is None:
+            print(f"# {product.slug}: not in portal — run apply first")
+            continue
+
+        changes = client.get_unpublished_changes(match.id)
+        if changes.is_empty:
+            print(f"# {product.slug}: already published, nothing to do")
+            continue
+
+        staged_total += len(changes.changes)
+        print(f"{'PREVIEW' if preview else 'PUBLISH'} product {product.slug}")
+        for line in describe_changes(product.slug, changes):
+            print(line)
+
+        for message in client.publish_product(match.id, preview=preview):
+            print(describe_validation(message))
+            if message.is_error:
+                error_total += 1
+
+        if not preview:
+            published_total += 1
+
+    if preview:
+        print(
+            f"# {staged_total} change(s) staged, {error_total} error(s) — "
+            f"preview only, nothing published"
+        )
+    else:
+        print(f"# {published_total} product(s) published, {error_total} error(s)")
+
+    if error_total:
+        return EXIT_ERROR
+    if preview and staged_total:
+        return EXIT_CHANGES_PENDING
+    return EXIT_OK
+
+
+def describe_changes(product_slug: str, changes: UnpublishedChanges) -> list[str]:
+    """Render a product's staged changes, one indented line each.
+
+    The portal's `path` ends in the entry slug, so the last segment reads back as
+    the familiar `product/slug` (§A.7). `reordered` is a whole-product flag with
+    no single entry behind it, so it prints on its own line.
+    """
+    lines = []
+    for change in changes.changes:
+        slug = change.path.rsplit("/", 1)[-1]
+        lines.append(f"  {change.kind} {change.content_type} {product_slug}/{slug}")
+    if changes.reordered:
+        lines.append("  reordered navigation")
+    return lines
+
+
+def describe_validation(message: ValidationMessage) -> str:
+    """One line for a publish validation message — `ERROR [INVALID_URL]: ...`."""
+    code = f" [{message.error_code}]" if message.error_code else ""
+    return f"  {message.level.upper()}{code}: {message.message}"
+
+
 # --- argument parsing and dispatch ------------------------------------------
 
 
@@ -309,6 +402,21 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         help="Directory holding product folders (default: products).",
     )
 
+    publish = subcommands.add_parser(
+        "publish", help="Promote applied draft content to the live view."
+    )
+    publish.add_argument(
+        "--products",
+        type=Path,
+        default=DEFAULT_PRODUCTS_ROOT,
+        help="Directory holding product folders (default: products).",
+    )
+    publish.add_argument(
+        "--preview",
+        action="store_true",
+        help="Validate and show what would be published, without publishing.",
+    )
+
     return parser.parse_args(argv)
 
 
@@ -332,6 +440,12 @@ def main(argv: list[str] | None = None) -> int:
             api_key, subdomain = configuration_from_environment()
             client = PortalClient(api_key)
             return run_apply(arguments.products, client, subdomain)
+        if arguments.command == "publish":
+            api_key, subdomain = configuration_from_environment()
+            client = PortalClient(api_key)
+            return run_publish(
+                arguments.products, client, subdomain, preview=arguments.preview
+            )
     except (
         ManifestError,
         ReconcileError,

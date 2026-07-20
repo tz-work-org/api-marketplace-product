@@ -51,6 +51,10 @@ class FakeSession:
         self.calls.append({"method": "PATCH", "url": url, "json": json or {}})
         return self._responses.pop(0)
 
+    def put(self, url: str, params: dict | None = None, timeout: int | None = None):
+        self.calls.append({"method": "PUT", "url": url, "params": params or {}})
+        return self._responses.pop(0)
+
 
 def client_with(responses: list[FakeResponse]) -> PortalClient:
     """A PortalClient whose network session is replaced by a fake one."""
@@ -334,3 +338,70 @@ def test_update_product_sends_only_the_changed_fields():
     client.update_product("prod-1", ("description",), desired)
 
     assert client.session.calls[0]["json"] == {"description": "new words"}
+
+
+# --- publish (§A.15 step 8) -------------------------------------------------
+
+
+def test_get_unpublished_changes_flattens_the_diff_and_keeps_the_kind():
+    payload = {
+        "added": [
+            {
+                "path": "docs/getting-started",
+                "title": "Getting Started",
+                "type": "markdown",
+                "tableOfContentsId": "t1",
+            }
+        ],
+        "modified": [{"path": "docs/intake", "title": "Intake", "type": "apiUrl"}],
+        "removed": [],
+        "missing": [],
+        "reordered": True,
+        "comments": [],
+    }
+    client = client_with([FakeResponse(payload)])
+
+    changes = client.get_unpublished_changes("prod-1")
+
+    assert changes.is_empty is False
+    assert changes.reordered is True
+    labelled = {(c.kind, c.content_type, c.path) for c in changes.changes}
+    assert ("added", "markdown", "docs/getting-started") in labelled
+    assert ("modified", "apiUrl", "docs/intake") in labelled
+
+
+def test_get_unpublished_changes_with_nothing_staged_is_empty():
+    payload = {"added": [], "modified": [], "removed": [], "missing": [], "reordered": False}
+    client = client_with([FakeResponse(payload)])
+
+    assert client.get_unpublished_changes("prod-1").is_empty
+
+
+def test_publish_product_sends_the_preview_param_and_parses_messages():
+    payload = {
+        "validationMessages": [
+            {
+                "level": "error",
+                "message": "URL not allowed",
+                "errorCode": "URL_NOT_ALLOWED",
+                "tableOfContentsId": "t1",
+            },
+            {"level": "warning", "message": "heads up"},
+        ]
+    }
+    client = client_with([FakeResponse(payload)])
+
+    messages = client.publish_product("prod-1", preview=True)
+
+    call = client.session.calls[0]
+    assert call["method"] == "PUT"
+    assert call["url"].endswith("/products/prod-1/published-content")
+    assert call["params"] == {"preview": True}
+    assert [m.level for m in messages] == ["error", "warning"]
+    assert messages[0].is_error and messages[0].error_code == "URL_NOT_ALLOWED"
+
+
+def test_publish_product_with_no_messages_is_clean():
+    client = client_with([FakeResponse({})])  # ValidationResponse may omit the list
+
+    assert client.publish_product("prod-1", preview=False) == []

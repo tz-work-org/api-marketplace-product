@@ -110,6 +110,57 @@ class Product:
 
 
 @dataclass(frozen=True)
+class ContentChange:
+    """One entry that differs between a product's draft and its published state.
+
+    The portal computes this itself (§A.6) — `publish` reads it to show what
+    would go live, rather than recomputing a diff the platform already has.
+    `kind` is `added`, `modified`, `removed` or `missing`.
+    """
+
+    kind: str
+    path: str
+    title: str
+    content_type: str
+
+
+@dataclass(frozen=True)
+class UnpublishedChanges:
+    """A product's draft-vs-published diff, as the portal reports it.
+
+    `reordered` is a whole-product flag the platform sets when the navigation
+    order moved, separate from any individual entry change.
+    """
+
+    changes: tuple[ContentChange, ...] = ()
+    reordered: bool = False
+
+    @property
+    def is_empty(self) -> bool:
+        """True when nothing is staged — publishing would be a no-op."""
+        return not self.changes and not self.reordered
+
+
+@dataclass(frozen=True)
+class ValidationMessage:
+    """A problem the portal raised while (pre)publishing a product.
+
+    `level` is `warning` or `error`; an error means the publish could not stand
+    as asked — typically an API reference whose URL will not resolve, which is
+    exactly what `publish --preview` exists to catch before it goes live.
+    """
+
+    level: str
+    message: str
+    error_code: str = ""
+    toc_id: str | None = None
+
+    @property
+    def is_error(self) -> bool:
+        return self.level == "error"
+
+
+@dataclass(frozen=True)
 class Operation:
     """One action the reconciler wants taken against the portal.
 
